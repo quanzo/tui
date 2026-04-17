@@ -23,6 +23,7 @@ final class KeyEventDto
     public const TYPE_PASTE = 'paste';
     public const TYPE_TAB = 'tab';
     public const TYPE_ENTER = 'enter';
+    public const TYPE_CTRL_ENTER = 'ctrl_enter';
     public const TYPE_BACKSPACE = 'backspace';
     public const TYPE_DELETE = 'delete';
     public const TYPE_HOME = 'home';
@@ -65,6 +66,17 @@ final class KeyEventDto
     public static function enter(): self
     {
         return new self(self::TYPE_ENTER);
+    }
+
+    /**
+     * Ctrl+Enter (в текущей реализации — Ctrl+J).
+     *
+     * Во многих терминалах Ctrl+Enter не отличается от Enter, поэтому на этапе MVP
+     * используем Ctrl+J как отдельное событие для вставки новой строки в input.
+     */
+    public static function ctrlEnter(): self
+    {
+        return new self(self::TYPE_CTRL_ENTER);
     }
 
     public static function backspace(): self

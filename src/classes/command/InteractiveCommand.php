@@ -83,6 +83,28 @@ class InteractiveCommand extends Command
     /** @var int Верхняя строка viewport ввода (для отображения 3 строк) */
     private int $inputViewportTopLine = 0;
 
+    /**
+     * История введённых (отправленных) команд для навигации ArrowUp/ArrowDown.
+     *
+     * @var list<string>
+     */
+    private array $inputHistory = [];
+
+    /**
+     * Индекс текущего элемента истории, если пользователь находится в режиме history.
+     */
+    private ?int $inputHistoryIndex = null;
+
+    /**
+     * Черновик (текущий буфер), сохранённый при первом переходе в history.
+     */
+    private string $inputHistoryDraftBuffer = '';
+
+    /**
+     * Позиция курсора в черновике, сохранённая при первом переходе в history.
+     */
+    private int $inputHistoryDraftCursorOffset = 0;
+
     /** @var bool Включён ли режим mouse reporting (выключен по умолчанию) */
     private bool $mouseModeEnabled = false;
 
@@ -541,10 +563,15 @@ class InteractiveCommand extends Command
     private function buildStateDto(): TuiStateDto
     {
         return (new TuiStateDto())
+            ->setHeaderTitle((string) ($this->getName() ?: 'interactive'))
             ->setHistory($this->history)
             ->setInputBuffer($this->inputBuffer)
             ->setCursorOffset($this->cursorOffset)
             ->setInputViewportTopLine($this->inputViewportTopLine)
+            ->setInputHistory($this->inputHistory)
+            ->setInputHistoryIndex($this->inputHistoryIndex)
+            ->setInputHistoryDraftBuffer($this->inputHistoryDraftBuffer)
+            ->setInputHistoryDraftCursorOffset($this->inputHistoryDraftCursorOffset)
             ->setMouseModeEnabled($this->mouseModeEnabled)
             ->setOutputScroll($this->outputScroll)
             ->setFocus($this->focus)
@@ -565,6 +592,10 @@ class InteractiveCommand extends Command
         $this->inputBuffer          = $state->getInputBuffer();
         $this->cursorOffset         = $state->getCursorOffset();
         $this->inputViewportTopLine = $state->getInputViewportTopLine();
+        $this->inputHistory = $state->getInputHistory();
+        $this->inputHistoryIndex = $state->getInputHistoryIndex();
+        $this->inputHistoryDraftBuffer = $state->getInputHistoryDraftBuffer();
+        $this->inputHistoryDraftCursorOffset = $state->getInputHistoryDraftCursorOffset();
         $this->mouseModeEnabled     = $state->isMouseModeEnabled();
         $this->outputScroll         = $state->getOutputScroll();
         $this->focus                = $state->getFocus();

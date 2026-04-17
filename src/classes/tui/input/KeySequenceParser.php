@@ -70,7 +70,12 @@ final class KeySequenceParser
             return KeyEventDto::tab();
         }
 
-        if ($char === "\n" || $char === "\r") {
+        // При корректной настройке stty (см. TerminalModeManager) Enter приходит как CR (\r),
+        // а Ctrl+J — как LF (\n). Это даёт нам «многострочный ввод» на Ctrl+J без влияния на Enter.
+        if ($char === "\n") {
+            return KeyEventDto::ctrlEnter();
+        }
+        if ($char === "\r") {
             return KeyEventDto::enter();
         }
 
@@ -109,7 +114,16 @@ final class KeySequenceParser
             if ($third === 'Q') {
                 return KeyEventDto::toggleMouseMode();
             }
-            return null;
+            return match ($third) {
+                // Частый режим application cursor keys: ESC O A/B/C/D
+                'A' => KeyEventDto::arrowUp(),
+                'B' => KeyEventDto::arrowDown(),
+                'C' => KeyEventDto::arrowRight(),
+                'D' => KeyEventDto::arrowLeft(),
+                'H' => KeyEventDto::home(),
+                'F' => KeyEventDto::end(),
+                default => null,
+            };
         }
 
         if ($next !== '[') {
@@ -128,16 +142,36 @@ final class KeySequenceParser
 
         if (ctype_digit($third)) {
             $seq = $third;
-            // Считываем до '~' (например: 200~, 201~, 5~, 6~).
+            // Считываем до '~' или 'u'.
+            // '~' — классические CSI (например: 200~, 201~, 5~, 6~).
+            // 'u' — Kitty keyboard protocol (CSI u), например: ESC[13;5u (Ctrl+Enter).
             for ($i = 0; $i < 8; $i++) {
                 $ch = $this->reader->readChar($stdin);
                 if ($ch === null) {
                     return null;
                 }
                 $seq .= $ch;
-                if ($ch === '~') {
+                if ($ch === '~' || $ch === 'u') {
                     break;
                 }
+            }
+
+            if (str_ends_with($seq, 'u')) {
+                // Ожидаемые формы: "13u", "13;5u", "10;5u" и т.п.
+                $raw = substr($seq, 0, -1);
+                $parts = explode(';', $raw);
+                $code = (int) ($parts[0] ?? 0);
+                $mod = (int) ($parts[1] ?? 1);
+
+                // В Kitty: модификаторы кодируются как 1 + bitmask, Ctrl обычно даёт 5.
+                // Enter обычно code=13 (CR). Некоторые конфиги могут давать 10 (LF).
+                if (($code === 13 || $code === 10) && $mod === 5) {
+                    return KeyEventDto::ctrlEnter();
+                }
+                if ($code === 13 || $code === 10) {
+                    return KeyEventDto::enter();
+                }
+                return null;
             }
 
             if ($seq === '200~') {

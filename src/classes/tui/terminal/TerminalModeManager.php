@@ -49,6 +49,13 @@ class TerminalModeManager
     private bool $mouseX10Enabled = false;
 
     /**
+     * Включён ли Kitty keyboard protocol (CSI u).
+     *
+     * Нужен, чтобы отличать Ctrl+Enter от обычного Enter в терминалах, которые это поддерживают.
+     */
+    private bool $kittyKeyboardEnabled = false;
+
+    /**
      * Включает режимы TUI: alt-buffer, raw-input, скрывает курсор.
      *
      * Порядок важен:
@@ -64,8 +71,11 @@ class TerminalModeManager
             return;
         }
 
+        // Даже если курсор был скрыт предыдущим приложением/сессией, делаем его видимым при входе в TUI.
+        $this->showCursor();
+
         $this->enableNonCanonicalNoEcho();
-        $this->hideCursor();
+        $this->enableKittyKeyboardProtocol();
         $this->enableAltBuffer();
         $this->enableBracketedPaste();
 
@@ -96,10 +106,44 @@ class TerminalModeManager
         $this->disableMouseX10();
         $this->disableBracketedPaste();
         $this->disableAltBuffer();
+        $this->disableKittyKeyboardProtocol();
         $this->showCursor();
         $this->enableCanonicalEcho();
 
         $this->entered = false;
+    }
+
+    /**
+     * Включает Kitty keyboard protocol (CSI > 1 u).
+     *
+     * Протокол позволяет получать модификаторы (Ctrl/Alt/Shift) в виде CSI u последовательностей.
+     * См. kitty keyboard protocol: ESC[>1u (enable), ESC[>0u (disable).
+     *
+     * @return void
+     */
+    private function enableKittyKeyboardProtocol(): void
+    {
+        if ($this->kittyKeyboardEnabled) {
+            return;
+        }
+
+        echo "\033[>1u";
+        $this->kittyKeyboardEnabled = true;
+    }
+
+    /**
+     * Выключает Kitty keyboard protocol (CSI > 0 u).
+     *
+     * @return void
+     */
+    private function disableKittyKeyboardProtocol(): void
+    {
+        if (!$this->kittyKeyboardEnabled) {
+            return;
+        }
+
+        echo "\033[>0u";
+        $this->kittyKeyboardEnabled = false;
     }
 
     /**
@@ -162,7 +206,9 @@ class TerminalModeManager
         $snapshot = (string) shell_exec('stty -g 2>/dev/null');
         $snapshot = trim($snapshot);
         $this->prevStty = $snapshot !== '' ? $snapshot : null;
-        system('stty -icanon -echo');
+        // Отключаем icrnl, чтобы Enter приходил как CR (\r), а не переводился в LF (\n).
+        // Это позволяет различать Enter и Ctrl+J (LF) без необходимости ломать Enter.
+        system('stty -icanon -echo -icrnl -ixon');
     }
 
     /**

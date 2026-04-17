@@ -30,6 +30,13 @@ final class TuiStateDto
 
     private TuiHistoryDto $history;
 
+    /**
+     * Заголовок верхней рамки (1-я строка).
+     *
+     * Используется рендерером для отображения имени команды по центру.
+     */
+    private string $headerTitle = '';
+
     private string $inputBuffer = '';
     private int $cursorOffset = 0;
     private int $inputViewportTopLine = 0;
@@ -52,6 +59,32 @@ final class TuiStateDto
     private int $prevHeight = 0;
 
     /**
+     * История введённых команд (input history), аналог readline.
+     *
+     * Хранит только те значения, которые реально отправлялись (Enter submit).
+     *
+     * @var list<string>
+     */
+    private array $inputHistory = [];
+
+    /**
+     * Индекс текущего элемента истории (null, если пользователь не находится в режиме history).
+     */
+    private ?int $inputHistoryIndex = null;
+
+    /**
+     * Черновик буфера ввода, который был до входа в режим history.
+     *
+     * Нужен, чтобы при ArrowDown на «конце истории» восстановить то, что пользователь набирал.
+     */
+    private string $inputHistoryDraftBuffer = '';
+
+    /**
+     * Черновик позиции курсора, который был до входа в режим history.
+     */
+    private int $inputHistoryDraftCursorOffset = 0;
+
+    /**
      * Создаёт DTO состояния с пустой историей.
      *
      * История инициализируется внутри конструктора, чтобы состояние было валидным сразу после создания.
@@ -71,6 +104,29 @@ final class TuiStateDto
     public function getHistory(): TuiHistoryDto
     {
         return $this->history;
+    }
+
+    /**
+     * Заголовок верхней рамки (1-я строка).
+     *
+     * Обычно сюда передают имя команды (например, `interactive`), чтобы пользователь видел,
+     * какую именно TUI-команду он запустил.
+     */
+    public function getHeaderTitle(): string
+    {
+        return $this->headerTitle;
+    }
+
+    /**
+     * Устанавливает заголовок верхней рамки (1-я строка).
+     *
+     * @param string $headerTitle
+     * @return self
+     */
+    public function setHeaderTitle(string $headerTitle): self
+    {
+        $this->headerTitle = $headerTitle;
+        return $this;
     }
 
     /**
@@ -284,6 +340,76 @@ final class TuiStateDto
     public function setPrevStatusLine(string $prevStatusLine): self
     {
         $this->prevStatusLine = $prevStatusLine;
+        return $this;
+    }
+
+    /**
+     * Возвращает историю введённых команд.
+     *
+     * @return list<string>
+     */
+    public function getInputHistory(): array
+    {
+        return $this->inputHistory;
+    }
+
+    /**
+     * Устанавливает историю введённых команд.
+     *
+     * @param list<string> $inputHistory
+     * @return self
+     */
+    public function setInputHistory(array $inputHistory): self
+    {
+        $this->inputHistory = $inputHistory;
+        return $this;
+    }
+
+    /**
+     * Текущий индекс истории или null, если пользователь не листает историю.
+     */
+    public function getInputHistoryIndex(): ?int
+    {
+        return $this->inputHistoryIndex;
+    }
+
+    /**
+     * @param int|null $inputHistoryIndex
+     * @return self
+     */
+    public function setInputHistoryIndex(?int $inputHistoryIndex): self
+    {
+        $this->inputHistoryIndex = $inputHistoryIndex;
+        return $this;
+    }
+
+    public function getInputHistoryDraftBuffer(): string
+    {
+        return $this->inputHistoryDraftBuffer;
+    }
+
+    /**
+     * @param string $inputHistoryDraftBuffer
+     * @return self
+     */
+    public function setInputHistoryDraftBuffer(string $inputHistoryDraftBuffer): self
+    {
+        $this->inputHistoryDraftBuffer = $inputHistoryDraftBuffer;
+        return $this;
+    }
+
+    public function getInputHistoryDraftCursorOffset(): int
+    {
+        return $this->inputHistoryDraftCursorOffset;
+    }
+
+    /**
+     * @param int $inputHistoryDraftCursorOffset
+     * @return self
+     */
+    public function setInputHistoryDraftCursorOffset(int $inputHistoryDraftCursorOffset): self
+    {
+        $this->inputHistoryDraftCursorOffset = max(0, $inputHistoryDraftCursorOffset);
         return $this;
     }
 

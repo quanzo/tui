@@ -61,6 +61,7 @@ final class TuiReducer
         $state = match ($event->getType()) {
             KeyEventDto::TYPE_TAB => $this->applyTab($state),
             KeyEventDto::TYPE_ENTER => $this->applyEnter($state, $submittedInput),
+            KeyEventDto::TYPE_CTRL_ENTER => $this->applyCtrlEnter($state),
             KeyEventDto::TYPE_BACKSPACE => $this->applyBackspace($state),
             KeyEventDto::TYPE_DELETE => $this->applyDelete($state),
             KeyEventDto::TYPE_HOME => $this->applyHome($state),
@@ -121,6 +122,58 @@ final class TuiReducer
         $submittedInput = $state->getInputBuffer();
         $state->setInputBuffer('')->setCursorOffset(0)->setInputViewportTopLine(0);
         $state->setFullRedraw(true);
+
+        // Enter подтверждает ввод — добавляем в историю команд (как в консоли).
+        $this->appendInputHistoryIfNeeded($state, (string) $submittedInput);
+
+        // Выходим из режима history, если он был активен.
+        $state->setInputHistoryIndex(null);
+        $state->setInputHistoryDraftBuffer('');
+        $state->setInputHistoryDraftCursorOffset(0);
+
+        return $state;
+    }
+
+    /**
+     * Добавляет строку в историю ввода, если она непустая и не совпадает с последней.
+     *
+     * @param TuiStateDto $state
+     * @param string $submitted
+     * @return void
+     */
+    private function appendInputHistoryIfNeeded(TuiStateDto $state, string $submitted): void
+    {
+        $submitted = rtrim($submitted, "\n");
+        if (trim($submitted) === '') {
+            return;
+        }
+
+        $history = $state->getInputHistory();
+        $last = $history !== [] ? (string) end($history) : null;
+        if ($last === $submitted) {
+            return;
+        }
+
+        $history[] = $submitted;
+        $state->setInputHistory($history);
+    }
+
+    /**
+     * Обрабатывает Ctrl+Enter (в текущей реализации — Ctrl+J): вставляет новую строку в буфер ввода.
+     *
+     * В отличие от Enter, это событие не должно отправлять сообщение/команду.
+     *
+     * @param TuiStateDto $state
+     * @return TuiStateDto
+     */
+    private function applyCtrlEnter(TuiStateDto $state): TuiStateDto
+    {
+        if ($state->getFocus() !== TuiStateDto::FOCUS_INPUT) {
+            return $state;
+        }
+
+        [$buf, $off] = TuiInputBufferHelper::insert($state->getInputBuffer(), $state->getCursorOffset(), "\n");
+        $state->setInputBuffer($buf)->setCursorOffset($off);
         return $state;
     }
 
@@ -336,6 +389,11 @@ final class TuiReducer
     private function applyArrowUp(TuiStateDto $state): TuiStateDto
     {
         if ($state->getFocus() === TuiStateDto::FOCUS_INPUT) {
+            [$line] = TuiInputBufferHelper::cursorLineCol($state->getInputBuffer(), $state->getCursorOffset());
+            if ($line === 0) {
+                return $this->applyInputHistoryUp($state);
+            }
+
             $off = TuiInputBufferHelper::moveVertically($state->getInputBuffer(), $state->getCursorOffset(), -1);
             $state->setCursorOffset($off);
             return $state;
@@ -357,6 +415,11 @@ final class TuiReducer
     private function applyArrowDown(TuiStateDto $state, LayoutDto $layout): TuiStateDto
     {
         if ($state->getFocus() === TuiStateDto::FOCUS_INPUT) {
+            [$line] = TuiInputBufferHelper::cursorLineCol($state->getInputBuffer(), $state->getCursorOffset());
+            if ($line === 0 && $state->getInputHistoryIndex() !== null) {
+                return $this->applyInputHistoryDown($state);
+            }
+
             $off = TuiInputBufferHelper::moveVertically($state->getInputBuffer(), $state->getCursorOffset(), 1);
             $state->setCursorOffset($off);
             return $state;
@@ -442,6 +505,69 @@ final class TuiReducer
 
         $pageSize = max(1, $layout->getOutputVisibleLines() - 1);
         $state->setOutputScroll($state->getOutputScroll() + $pageSize)->setFullRedraw(true);
+        return $state;
+    }
+
+    /**
+     * Листает историю ввода вверх (ArrowUp), как в консоли.
+     *
+     * @param TuiStateDto $state
+     * @return TuiStateDto
+     */
+    private function applyInputHistoryUp(TuiStateDto $state): TuiStateDto
+    {
+        $history = $state->getInputHistory();
+        if ($history === []) {
+            return $state;
+        }
+
+        $idx = $state->getInputHistoryIndex();
+        if ($idx === null) {
+            // Первый вход в history — сохраняем черновик.
+            $state->setInputHistoryDraftBuffer($state->getInputBuffer());
+            $state->setInputHistoryDraftCursorOffset($state->getCursorOffset());
+            $idx = count($history) - 1;
+        } else {
+            $idx = max(0, $idx - 1);
+        }
+
+        $state->setInputHistoryIndex($idx);
+        $state->setInputBuffer((string) $history[$idx]);
+        $state->setCursorOffset(TuiInputBufferHelper::length((string) $history[$idx]));
+        $state->setInputViewportTopLine(0);
+        return $state;
+    }
+
+    /**
+     * Листает историю ввода вниз (ArrowDown), как в консоли.
+     *
+     * При выходе за предел последнего элемента восстанавливает черновик.
+     *
+     * @param TuiStateDto $state
+     * @return TuiStateDto
+     */
+    private function applyInputHistoryDown(TuiStateDto $state): TuiStateDto
+    {
+        $history = $state->getInputHistory();
+        $idx = $state->getInputHistoryIndex();
+        if ($history === [] || $idx === null) {
+            return $state;
+        }
+
+        $idx++;
+        if ($idx >= count($history)) {
+            // Возврат к черновику.
+            $state->setInputHistoryIndex(null);
+            $state->setInputBuffer($state->getInputHistoryDraftBuffer());
+            $state->setCursorOffset($state->getInputHistoryDraftCursorOffset());
+            $state->setInputViewportTopLine(0);
+            return $state;
+        }
+
+        $state->setInputHistoryIndex($idx);
+        $state->setInputBuffer((string) $history[$idx]);
+        $state->setCursorOffset(TuiInputBufferHelper::length((string) $history[$idx]));
+        $state->setInputViewportTopLine(0);
         return $state;
     }
 }

@@ -192,7 +192,8 @@ final class TuiRenderer
         $innerWidth = max(0, $width - 3);
 
         // Явно позиционируем курсор и очищаем строку, чтобы избежать «дрейфа»/хвостов в Windows Terminal.
-        echo "\033[1;1H\033[0m\033[2K" . $color . $tl . str_repeat($hline, $innerWidth) . $tr . $reset;
+        $topBorder = $this->buildTopBorderWithTitle($innerWidth, $state->getHeaderTitle(), $hline, $tl, $tr);
+        echo "\033[1;1H\033[0m\033[2K" . $color . $topBorder . $reset;
 
         $formatter = new TuiHistoryFormatter();
         $displayLines = $formatter->toDisplayLines($state->getHistory(), $innerWidth, new TuiThemeDto());
@@ -222,6 +223,42 @@ final class TuiRenderer
 
         $bottomY = $layout->getOutputContentEnd() + 1;
         echo "\033[{$bottomY};1H\033[0m\033[2K" . $color . $bl . str_repeat($hline, $innerWidth) . $br . $reset;
+    }
+
+    /**
+     * Строит верхнюю рамку области (┌── title ──┐) с заголовком по центру.
+     *
+     * Заголовок не содержит ANSI-кодов и обрезается по видимой ширине, если терминал узкий.
+     *
+     * @param int $innerWidth Внутренняя ширина (между углами), в колонках терминала
+     * @param string $title Заголовок (например, имя команды)
+     * @param string $hline Символ горизонтальной линии
+     * @param string $tl Левый верхний угол
+     * @param string $tr Правый верхний угол
+     * @return string Полная строка рамки (без ANSI-цветов)
+     */
+    private function buildTopBorderWithTitle(int $innerWidth, string $title, string $hline, string $tl, string $tr): string
+    {
+        if ($innerWidth <= 0) {
+            return $tl . $tr;
+        }
+
+        $title = trim($title);
+        if ($title === '') {
+            return $tl . str_repeat($hline, $innerWidth) . $tr;
+        }
+
+        $decorated = ' ' . $title . ' ';
+        $maxTitleWidth = max(0, $innerWidth - 2);
+        if (mb_strwidth($decorated) > $maxTitleWidth) {
+            $decorated = ' ' . mb_strimwidth($title, 0, max(0, $maxTitleWidth - 2), '', 'UTF-8') . ' ';
+        }
+
+        $titleWidth = mb_strwidth($decorated);
+        $left = (int) floor(($innerWidth - $titleWidth) / 2);
+        $right = max(0, $innerWidth - $titleWidth - $left);
+
+        return $tl . str_repeat($hline, max(0, $left)) . $decorated . str_repeat($hline, $right) . $tr;
     }
 
     /**
@@ -368,7 +405,8 @@ final class TuiRenderer
             $relRow = $line - $state->getInputViewportTopLine();
             $relRow = max(0, min(2, $relRow));
             $row = $layout->getInputContentStart() + $relRow;
-            $col = 1 + max(0, $col0);
+            // В строке input рисуется левая рамка в колонке 1, поэтому контент начинается с колонки 2.
+            $col = 2 + max(0, $col0);
             echo "\033[{$row};{$col}H";
             return;
         }

@@ -6,10 +6,12 @@ namespace quanzo\tui\classes\tui\hooks;
 
 use quanzo\tui\classes\dto\tui\TuiPreHookDecisionDto;
 use quanzo\tui\classes\dto\tui\command\TuiCommandContextDto;
+use quanzo\tui\classes\dto\tui\command\TuiCommandDispatchResultDto;
 use quanzo\tui\classes\dto\tui\history\TuiHistoryDto;
 use quanzo\tui\classes\dto\tui\history\TuiHistoryEntryDto;
 use quanzo\tui\classes\dto\tui\view\blocks\NoticeBlockDto;
 use quanzo\tui\classes\dto\tui\view\blocks\TextBlockDto;
+use quanzo\tui\classes\tui\async\TuiJobManager;
 use quanzo\tui\classes\tui\command\TuiCommandDispatcher;
 use quanzo\tui\classes\tui\command\UserInputParser;
 use quanzo\tui\enums\tui\TuiNoticeKindEnum;
@@ -33,14 +35,17 @@ final class WorkspaceTuiPreOutputHook implements TuiPreOutputHookInterface
 {
     private UserInputParser $parser;
     private TuiCommandDispatcher $dispatcher;
+    private TuiJobManager $jobs;
 
     /**
      * @param TuiCommandDispatcher $dispatcher Диспетчер с зарегистрированными handlers
+     * @param TuiJobManager $jobs Менеджер асинхронных задач (для async-команд и `/break`)
      * @param UserInputParser|null $parser Парсер пользовательского ввода (по умолчанию создаётся внутри)
      */
-    public function __construct(TuiCommandDispatcher $dispatcher, ?UserInputParser $parser = null)
+    public function __construct(TuiCommandDispatcher $dispatcher, TuiJobManager $jobs, ?UserInputParser $parser = null)
     {
         $this->dispatcher = $dispatcher;
+        $this->jobs = $jobs;
         $this->parser = $parser ?? new UserInputParser();
     }
 
@@ -67,11 +72,42 @@ final class WorkspaceTuiPreOutputHook implements TuiPreOutputHookInterface
                 return $decision->setAppendEntries($entries);
             }
 
-            $res = $this->dispatcher->dispatch($ctx, $parsed);
-            if ($res->getAppendEntries() === []) {
+            $dispatch = $this->dispatcher->dispatch($ctx, $parsed);
+            if (!$dispatch->isHandled()) {
                 $entries[] = TuiHistoryEntryDto::output('unknown command')
                     ->setBlocks([new NoticeBlockDto(TuiNoticeKindEnum::Error, 'Неизвестная команда: /' . $parsed->getCommandName())])
                     ->setPlainText('Неизвестная команда');
+                return $decision->setAppendEntries($entries);
+            }
+
+            if ($dispatch->isAsync()) {
+                $asyncHandler = $dispatch->getAsyncHandler();
+                if ($asyncHandler === null) {
+                    $entries[] = TuiHistoryEntryDto::output('async handler missing')
+                        ->setBlocks([new NoticeBlockDto(TuiNoticeKindEnum::Error, 'Ошибка: async-handler отсутствует')])
+                        ->setPlainText('async handler missing');
+                    return $decision->setAppendEntries($entries);
+                }
+
+                $forceCancel = $asyncHandler->getForceCancelCallback($ctx, $parsed);
+                $jobId = $this->jobs->start(
+                    $originalInput,
+                    static fn(\Amp\Cancellation $c) => $asyncHandler->handleAsync($ctx, $parsed, $c),
+                    $forceCancel,
+                );
+
+                $entries[] = TuiHistoryEntryDto::output('job started')
+                    ->setBlocks([new NoticeBlockDto(TuiNoticeKindEnum::Info, 'Запущено: ' . $originalInput . ' (' . $jobId . ')')])
+                    ->setPlainText('job started ' . $jobId);
+
+                return $decision->setAppendEntries($entries);
+            }
+
+            $res = $dispatch->getSyncResult() ?? (new \quanzo\tui\classes\dto\tui\command\TuiCommandResultDto());
+            if ($res->getAppendEntries() === []) {
+                $entries[] = TuiHistoryEntryDto::output('empty result')
+                    ->setBlocks([new NoticeBlockDto(TuiNoticeKindEnum::Info, 'Команда выполнена.')])
+                    ->setPlainText('Команда выполнена');
             } else {
                 foreach ($res->getAppendEntries() as $e) {
                     $entries[] = $e;

@@ -31,8 +31,9 @@ final class InteractiveCommandHandlersDelegationTest extends TestCase
         $cmd->addHandler($this->handler('help', (new TuiCommandResultDto())->setExit(true)));
 
         $dispatcher = $this->getInternalDispatcher($cmd);
-        $res = $dispatcher->dispatch($this->ctx(), $this->parsed('help'));
-        $this->assertTrue($res->isExit());
+        $dispatch = $dispatcher->dispatch($this->ctx(), $this->parsed('help'));
+        $this->assertTrue($dispatch->isHandled());
+        $this->assertTrue(($dispatch->getSyncResult()?->isExit()) === true);
     }
 
     /**
@@ -45,8 +46,9 @@ final class InteractiveCommandHandlersDelegationTest extends TestCase
         $cmd->addHandler($this->handler('exit', (new TuiCommandResultDto())->setExit(true)));
 
         $dispatcher = $this->getInternalDispatcher($cmd);
-        $res = $dispatcher->dispatch($this->ctx(), $this->parsed('exit'));
-        $this->assertTrue($res->isExit());
+        $dispatch = $dispatcher->dispatch($this->ctx(), $this->parsed('exit'));
+        $this->assertTrue($dispatch->isHandled());
+        $this->assertTrue(($dispatch->getSyncResult()?->isExit()) === true);
     }
 
     /**
@@ -72,8 +74,8 @@ final class InteractiveCommandHandlersDelegationTest extends TestCase
         $this->assertTrue($cmd->removeHandlerByName('help'));
 
         $dispatcher = $this->getInternalDispatcher($cmd);
-        $res = $dispatcher->dispatch($this->ctx(), $this->parsed('help'));
-        $this->assertFalse($res->isExit());
+        $dispatch = $dispatcher->dispatch($this->ctx(), $this->parsed('help'));
+        $this->assertFalse($dispatch->isHandled());
     }
 
     /**
@@ -88,8 +90,8 @@ final class InteractiveCommandHandlersDelegationTest extends TestCase
         $this->assertTrue($cmd->removeHandler($handler));
 
         $dispatcher = $this->getInternalDispatcher($cmd);
-        $res = $dispatcher->dispatch($this->ctx(), $this->parsed('help'));
-        $this->assertFalse($res->isExit());
+        $dispatch = $dispatcher->dispatch($this->ctx(), $this->parsed('help'));
+        $this->assertFalse($dispatch->isHandled());
     }
 
     /**

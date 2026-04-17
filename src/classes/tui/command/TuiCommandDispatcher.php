@@ -6,8 +6,11 @@ namespace quanzo\tui\classes\tui\command;
 
 use quanzo\tui\classes\dto\tui\command\ParsedUserInputDto;
 use quanzo\tui\classes\dto\tui\command\TuiCommandContextDto;
+use quanzo\tui\classes\dto\tui\command\TuiCommandDispatchResultDto;
 use quanzo\tui\classes\dto\tui\command\TuiCommandResultDto;
+use quanzo\tui\interfaces\tui\command\AsyncTuiCommandHandlerInterface;
 use quanzo\tui\interfaces\tui\command\TuiCommandHandlerInterface;
+use quanzo\tui\interfaces\tui\command\TuiNamedCommandHandlerInterface;
 
 /**
  * Диспетчер TUI-команд: выбирает handler по имени.
@@ -21,11 +24,11 @@ use quanzo\tui\interfaces\tui\command\TuiCommandHandlerInterface;
  */
 final class TuiCommandDispatcher
 {
-    /** @var array<string, TuiCommandHandlerInterface> */
+    /** @var array<string, TuiNamedCommandHandlerInterface> */
     private array $handlersByName = [];
 
     /**
-     * @param list<TuiCommandHandlerInterface> $handlers
+     * @param list<TuiNamedCommandHandlerInterface> $handlers
      */
     public function __construct(array $handlers)
     {
@@ -39,10 +42,10 @@ final class TuiCommandDispatcher
      *
      * Если handler с таким именем уже был зарегистрирован, он будет перезаписан (overwrite).
      *
-     * @param TuiCommandHandlerInterface $handler
+     * @param TuiNamedCommandHandlerInterface $handler
      * @return self
      */
-    public function addHandler(TuiCommandHandlerInterface $handler): self
+    public function addHandler(TuiNamedCommandHandlerInterface $handler): self
     {
         $this->handlersByName[$handler->getName()] = $handler;
         return $this;
@@ -69,32 +72,43 @@ final class TuiCommandDispatcher
      *
      * Удаление выполняется по имени handler'а (`$handler->getName()`).
      *
-     * @param TuiCommandHandlerInterface $handler
+     * @param TuiNamedCommandHandlerInterface $handler
      * @return bool true если handler был найден и удалён, иначе false
      */
-    public function removeHandler(TuiCommandHandlerInterface $handler): bool
+    public function removeHandler(TuiNamedCommandHandlerInterface $handler): bool
     {
         return $this->removeHandlerByName($handler->getName());
     }
 
     /**
-     * Диспетчеризует команду на handler по имени.
+     * Диспетчеризует команду на handler по имени и возвращает результат диспетчеризации.
      *
-     * Если handler не найден — возвращает «пустой» результат (без append entries).
-     * Вызывающая сторона решает, как реагировать на неизвестные команды.
+     * Поведение:
+     * - если handler не найден — `isHandled()` будет false;
+     * - если handler sync — возвращается `sync(result, handler)`;
+     * - если handler async — возвращается `async(handler)`, а вызыватель решает, как/где запускать Future.
      *
      * @param TuiCommandContextDto $ctx Контекст выполнения (cwd и т.д.)
      * @param ParsedUserInputDto $input Результат парсинга пользовательского ввода
-     * @return TuiCommandResultDto Результат handler’а или пустой результат, если handler не найден
+     * @return TuiCommandDispatchResultDto DTO диспетчеризации (sync/async/not handled)
      */
-    public function dispatch(TuiCommandContextDto $ctx, ParsedUserInputDto $input): TuiCommandResultDto
+    public function dispatch(TuiCommandContextDto $ctx, ParsedUserInputDto $input): TuiCommandDispatchResultDto
     {
         $name = (string) $input->getCommandName();
         $handler = $this->handlersByName[$name] ?? null;
         if ($handler === null) {
-            return (new TuiCommandResultDto());
+            return new TuiCommandDispatchResultDto();
         }
 
-        return $handler->handle($ctx, $input);
+        if ($handler instanceof AsyncTuiCommandHandlerInterface) {
+            return TuiCommandDispatchResultDto::async($handler);
+        }
+
+        if ($handler instanceof TuiCommandHandlerInterface) {
+            return TuiCommandDispatchResultDto::sync($handler->handle($ctx, $input), $handler);
+        }
+
+        // Теоретически невозможно: реестр должен содержать только совместимые handlers.
+        return new TuiCommandDispatchResultDto();
     }
 }

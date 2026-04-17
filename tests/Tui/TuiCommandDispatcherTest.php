@@ -29,8 +29,10 @@ final class TuiCommandDispatcherTest extends TestCase
         $handler = $this->handler('help', (new TuiCommandResultDto())->setExit(true));
         $dispatcher->addHandler($handler);
 
-        $res = $dispatcher->dispatch($this->ctx(), $this->cmd('help'));
-        $this->assertTrue($res->isExit());
+        $dispatch = $dispatcher->dispatch($this->ctx(), $this->cmd('help'));
+        $this->assertTrue($dispatch->isHandled());
+        $this->assertFalse($dispatch->isAsync());
+        $this->assertTrue(($dispatch->getSyncResult()?->isExit()) === true);
     }
 
     /**
@@ -39,8 +41,8 @@ final class TuiCommandDispatcherTest extends TestCase
     public function testDispatchUnknownReturnsEmptyResult(): void
     {
         $dispatcher = new TuiCommandDispatcher([]);
-        $res = $dispatcher->dispatch($this->ctx(), $this->cmd('unknown'));
-        $this->assertSame([], $res->getAppendEntries());
+        $dispatch = $dispatcher->dispatch($this->ctx(), $this->cmd('unknown'));
+        $this->assertFalse($dispatch->isHandled());
     }
 
     /**
@@ -53,8 +55,9 @@ final class TuiCommandDispatcherTest extends TestCase
         $dispatcher->addHandler($this->handler('exit', (new TuiCommandResultDto())->setExit(false)));
         $dispatcher->addHandler($this->handler('exit', (new TuiCommandResultDto())->setExit(true)));
 
-        $res = $dispatcher->dispatch($this->ctx(), $this->cmd('exit'));
-        $this->assertTrue($res->isExit());
+        $dispatch = $dispatcher->dispatch($this->ctx(), $this->cmd('exit'));
+        $this->assertTrue($dispatch->isHandled());
+        $this->assertTrue(($dispatch->getSyncResult()?->isExit()) === true);
     }
 
     /**
@@ -79,8 +82,8 @@ final class TuiCommandDispatcherTest extends TestCase
 
         $this->assertTrue($dispatcher->removeHandlerByName('help'));
 
-        $res = $dispatcher->dispatch($this->ctx(), $this->cmd('help'));
-        $this->assertFalse($res->isExit());
+        $dispatch = $dispatcher->dispatch($this->ctx(), $this->cmd('help'));
+        $this->assertFalse($dispatch->isHandled());
     }
 
     /**
@@ -94,8 +97,8 @@ final class TuiCommandDispatcherTest extends TestCase
 
         $this->assertTrue($dispatcher->removeHandler($handler));
 
-        $res = $dispatcher->dispatch($this->ctx(), $this->cmd('help'));
-        $this->assertFalse($res->isExit());
+        $dispatch = $dispatcher->dispatch($this->ctx(), $this->cmd('help'));
+        $this->assertFalse($dispatch->isHandled());
     }
 
     /**

@@ -4,7 +4,10 @@
     "type": "project",
     "require": {
         "php": ">=8.1",
-        "symfony/console": "^6.4"
+        "symfony/console": "^6.4",
+        "amphp/amp": "^3",
+        "amphp/http-client": "^5",
+        "amphp/parallel-functions": "^2.0"
     },
     "require-dev": {
         "phpstan/phpstan": "^2.1",

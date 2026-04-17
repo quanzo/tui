@@ -17,9 +17,7 @@ use quanzo\tui\classes\dto\tui\command\TuiCommandResultDto;
  * final class HelpHandler implements TuiCommandHandlerInterface { ... }
  * ```
  */
-interface TuiCommandHandlerInterface
+interface TuiCommandHandlerInterface extends TuiNamedCommandHandlerInterface
 {
-    public function getName(): string;
-
     public function handle(TuiCommandContextDto $ctx, ParsedUserInputDto $input): TuiCommandResultDto;
 }

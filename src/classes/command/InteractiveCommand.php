@@ -2,7 +2,9 @@
 
 namespace quanzo\tui\classes\command;
 
+use Revolt\EventLoop;
 use quanzo\tui\classes\status\ModeStatus;
+use quanzo\tui\classes\tui\async\TuiJobManager;
 use quanzo\tui\classes\tui\terminal\TerminalModeManager;
 use quanzo\tui\classes\tui\input\KeySequenceParser;
 use quanzo\tui\classes\tui\input\Utf8CharReader;
@@ -22,6 +24,7 @@ use quanzo\tui\classes\dto\tui\view\TuiThemeDto;
 use quanzo\tui\interfaces\tui\TuiPostOutputHookInterface;
 use quanzo\tui\interfaces\tui\TuiPreOutputHookInterface;
 use quanzo\tui\interfaces\tui\command\TuiCommandHandlerInterface;
+use quanzo\tui\interfaces\tui\command\TuiNamedCommandHandlerInterface;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -162,6 +165,14 @@ class InteractiveCommand extends Command
 
     private ?PostOutputContextDto $pendingPostHookContext = null;
 
+    /**
+     * Менеджер асинхронных задач (jobs) для async-команд и `/break`.
+     *
+     * По умолчанию создаётся внутри, но может быть внедрён извне (wiring в `bin/console.php`),
+     * чтобы handlers могли использовать тот же экземпляр.
+     */
+    private ?TuiJobManager $jobs = null;
+
     protected function configure(): void
     {
         if ($this->commandName !== null && $this->commandName !== '') {
@@ -233,6 +244,22 @@ class InteractiveCommand extends Command
     }
 
     /**
+     * Внедряет `TuiJobManager` (fluent API).
+     *
+     * Это позволяет внешнему коду создать один экземпляр job-manager и передать его:
+     * - в `InteractiveCommand` (для доставки результатов в историю);
+     * - в handlers (например, `/break`).
+     *
+     * @param TuiJobManager $jobs
+     * @return self
+     */
+    public function setJobManager(TuiJobManager $jobs): self
+    {
+        $this->jobs = $jobs;
+        return $this;
+    }
+
+    /**
      * Регистрирует handler TUI-команды (fluent API).
      *
      * Поведение при совпадении имён: overwrite (последний добавленный handler побеждает).
@@ -240,10 +267,10 @@ class InteractiveCommand extends Command
      * Важно: если вы используете кастомный pre-hook через `setPreHook()`, то добавленные сюда handlers
      * не будут автоматически применяться, пока ваш pre-hook сам не использует dispatcher.
      *
-     * @param TuiCommandHandlerInterface $handler
+     * @param TuiNamedCommandHandlerInterface $handler
      * @return self
      */
-    public function addHandler(TuiCommandHandlerInterface $handler): self
+    public function addHandler(TuiNamedCommandHandlerInterface $handler): self
     {
         $this->getDispatcher()->addHandler($handler);
         return $this;
@@ -265,10 +292,10 @@ class InteractiveCommand extends Command
      *
      * Удаление выполняется по имени handler'а (`$handler->getName()`).
      *
-     * @param TuiCommandHandlerInterface $handler
+     * @param TuiNamedCommandHandlerInterface $handler
      * @return bool true если handler был найден и удалён, иначе false
      */
-    public function removeHandler(TuiCommandHandlerInterface $handler): bool
+    public function removeHandler(TuiNamedCommandHandlerInterface $handler): bool
     {
         return $this->getDispatcher()->removeHandler($handler);
     }
@@ -319,6 +346,7 @@ class InteractiveCommand extends Command
      */
     private function runLoop(TerminalModeManager $terminalMode): void
     {
+        /** @var resource $stdin */
         $stdin = fopen('php://stdin', 'r');
         stream_set_blocking($stdin, false);
 
@@ -326,12 +354,26 @@ class InteractiveCommand extends Command
         $reducer = new TuiReducer();
         $renderer = new TuiRenderer();
 
-        $read = [$stdin];
-        $write = [];
-        $except = [];
+        $suspension = EventLoop::getSuspension();
 
-        while ($this->running) {
-            // Проверяем, не изменился ли размер терминала
+        $renderTickId = EventLoop::repeat(0.05, function () use ($terminalMode, $renderer, $suspension): void {
+            if (!$this->running) {
+                $suspension->resume(null);
+                return;
+            }
+
+            // Доставляем результаты завершённых async-задач в историю.
+            if ($this->jobs !== null) {
+                $completed = $this->jobs->drainCompleted();
+                if ($completed !== []) {
+                    foreach ($completed as $entry) {
+                        $this->history->append($entry);
+                    }
+                    $this->fullRedraw = true;
+                }
+            }
+
+            // Проверяем, не изменился ли размер терминала.
             $this->checkResize();
 
             // Синхронизируем mouse reporting с текущим состоянием (по умолчанию OFF).
@@ -341,7 +383,7 @@ class InteractiveCommand extends Command
                 $terminalMode->disableMouseX10();
             }
 
-            // Выполняем перерисовку, если необходимо
+            // Выполняем перерисовку, если необходимо.
             if ($this->fullRedraw) {
                 $this->renderFull($renderer);
                 $this->fullRedraw = false;
@@ -351,29 +393,40 @@ class InteractiveCommand extends Command
 
             // Post-hook должен вызываться после фактического рендера кадра.
             $this->runPendingPostHookIfAny();
+        });
 
-            // Ожидаем ввод с таймаутом 200 мс (позволяет реагировать на изменение размера)
-            $r = $read;
-            $w = $write;
-            $e = $except;
-            $ready = stream_select($r, $w, $e, 0, 200000);
-
-            if ($ready === false) {
-                usleep(10000); // при ошибке небольшая пауза
-                continue;
+        $readableId = EventLoop::onReadable($stdin, function (string $id, $stream) use ($parser, $reducer, $suspension): void {
+            if (!$this->running) {
+                EventLoop::cancel($id);
+                $suspension->resume(null);
+                return;
             }
 
-            if ($ready > 0) {
-                // Есть данные в STDIN
-                $event = $parser->readEvent($stdin);
+            // Читаем максимально возможное число событий из non-blocking потока за один callback,
+            // чтобы уменьшить задержки при удержании клавиш и при вставке.
+            for ($i = 0; $i < 256; $i++) {
+                $event = $parser->readEvent($stream);
                 if ($event === null) {
-                    continue;
+                    break;
                 }
-
                 $this->applyKeyEvent($event, $reducer);
+                if (!$this->running) {
+                    EventLoop::cancel($id);
+                    $suspension->resume(null);
+                    return;
+                }
             }
-        }
+        });
 
+        // Первичный кадр рисуем максимально быстро.
+        EventLoop::defer(function (): void {
+            $this->fullRedraw = true;
+        });
+
+        $suspension->suspend();
+
+        EventLoop::cancel($readableId);
+        EventLoop::cancel($renderTickId);
         fclose($stdin);
     }
 
@@ -441,8 +494,12 @@ class InteractiveCommand extends Command
      */
     private function initHooks(): void
     {
+        if ($this->jobs === null) {
+            $this->jobs = new TuiJobManager();
+        }
+
         if ($this->preHook === null) {
-            $this->preHook = new WorkspaceTuiPreOutputHook($this->getDispatcher());
+            $this->preHook = new WorkspaceTuiPreOutputHook($this->getDispatcher(), $this->jobs);
         }
         if ($this->postHook === null) {
             $this->postHook = new \quanzo\tui\classes\tui\hooks\DefaultTuiPostOutputHook();

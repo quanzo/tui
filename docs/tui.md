@@ -22,7 +22,7 @@ TUI запускается как Symfony Console команда:
 ### Архитектура (компоненты)
 
 - **Terminal режимы**: `src/classes/tui/terminal/TerminalModeManager.php`
-  - включает `stty -icanon -echo`, alt-buffer, скрывает курсор;
+  - включает `stty -icanon -echo -icrnl -ixon`, alt-buffer, показывает курсор;
   - включает **Bracketed Paste Mode** (`ESC[?2004h`) для корректной многострочной вставки;
   - обязательно использовать через `try/finally`, чтобы терминал гарантированно восстановился.
 
@@ -72,12 +72,17 @@ TUI запускается как Symfony Console команда:
 В `/tui` handlers регистрируются через `InteractiveCommand`, чтобы точка входа `bin/console.php` оставалась минимальной:
 
 ```php
+$jobs = new \quanzo\tui\classes\tui\async\TuiJobManager();
+
 $interactive = (new \quanzo\tui\classes\command\InteractiveCommand())
     ->setCommandName('interactive')
     ->setDescriptionText('Интерактивный TUI (workspace)')
+    ->setJobManager($jobs)
     ->addHandler(new \quanzo\tui\classes\tui\command\handlers\HelpCommandHandler())
     ->addHandler(new \quanzo\tui\classes\tui\command\handlers\WorkspaceCommandHandler())
     ->addHandler(new \quanzo\tui\classes\tui\command\handlers\ClearCommandHandler())
+    ->addHandler(new \quanzo\tui\classes\tui\command\handlers\BreakCommandHandler($jobs))
+    ->addHandler(new \quanzo\tui\classes\tui\command\handlers\LongCommandHandler())
     ->addHandler(new \quanzo\tui\classes\tui\command\handlers\ExitCommandHandler())
     ->setPostHook(new \quanzo\tui\classes\tui\hooks\DefaultTuiPostOutputHook());
 ```
@@ -88,13 +93,53 @@ $interactive = (new \quanzo\tui\classes\command\InteractiveCommand())
 
 - **`/help`**: справка
 - **`/ws ls`**: показать содержимое текущей директории (ограниченный список)
+- **`/long <seconds>`**: пример длительной async-команды (параллельно можно выполнять другие команды)
+- **`/exec <command...>`**: запустить shell-команду (вывод появится после завершения)
+- **`/break [jobId]`**: отменить последнюю активную задачу или конкретную по `jobId`
+- **`/jobs`**: список async-задач (активные + последние завершённые)
 - **`/clear`**: очистить историю
 - **`/exit`**: выйти из TUI
+
+### Async-команды (Amp v3) и отмена /break
+
+В `/tui` поддерживаются асинхронные команды на базе **Amp v3** и **Revolt EventLoop**:
+
+- **UI не блокируется**: async-handler возвращает `Future`, а результат попадает в историю, когда `Future` завершится.\n
+- **Параллельные задачи**: можно запускать несколько команд подряд — они выполняются одновременно.\n
+- **Отмена**: `/break` запрашивает cancellation для задачи.\n
+  - это **кооперативная отмена** (Amp cancellation): команда должна реагировать на cancellation;\n
+  - best-effort “жёсткая” отмена возможна только если конкретная задача умеет прерывать внешний ресурс.\n
+
+Ключевые компоненты:
+- `src/interfaces/tui/command/AsyncTuiCommandHandlerInterface.php` — контракт async handler.\n
+- `src/classes/tui/async/TuiJobManager.php` — менеджер задач: start/break/drainCompleted.\n
+- `src/classes/tui/hooks/WorkspaceTuiPreOutputHook.php` — стартует async job и возвращает entry “Запущено …”.\n
+- `src/classes/command/InteractiveCommand.php` — периодически вызывает `drainCompleted()` и добавляет entries в историю.\n
+
+Дополнительно:
+- **`/jobs`** печатает таблицу задач: активные (с `runningFor`) и последние завершённые (с `duration`).\n
+- После завершения (успех/отмена/ошибка) TUI добавляет служебное сообщение с **временем выполнения** задачи.\n
+
+### Команда /exec (shell)
+
+`/exec` запускает shell-команду асинхронно через `bash -lc` и добавляет итоговый результат в history после завершения.\n
+
+Примеры:
+
+```bash
+/exec ls -la
+/exec php -v
+/exec sleep 3 && echo done
+```
+
+Отмена:
+- `/break` отменяет задачу `/exec` (cancellation + best-effort SIGTERM/SIGKILL).\n
+- `jobId` можно посмотреть через `/jobs`.\n
 
 ### UX: ввод, Ctrl+Enter и история команд
 
 - **Заголовок сверху**: по центру первой строки рамки выводится заголовок (сейчас — имя команды, например `interactive`).
-- **Новая строка без отправки**: **Ctrl+Enter** во многих терминалах не отличается от Enter, поэтому временно используем **Ctrl+J** (LF) как эквивалент Ctrl+Enter.\n
+- **Новая строка без отправки**: **Ctrl+Enter** во многих терминалах не отличается от Enter, поэтому используем **Ctrl+J** (LF) как эквивалент Ctrl+Enter.\n
   - Ctrl+J вставляет `\\n` в input (multi-line) и **не отправляет** сообщение.\n
   - Enter (CR) — отправляет введённый буфер в обработку.\n
 - **История команд**: в первой строке input стрелки **Up/Down** работают как в консоли:\n

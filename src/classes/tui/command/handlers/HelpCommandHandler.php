@@ -56,6 +56,11 @@ final class HelpCommandHandler implements TuiCommandHandlerInterface
         $rows = [
             ['/help', 'Справка по командам'],
             ['/ws ls', 'Показать рабочее пространство'],
+            ['/long 10', 'Пример длительной async-команды (можно прервать через /break)'],
+            ['/exec ls -la', 'Запустить shell-команду (результат появится после завершения)'],
+            ['/break', 'Прервать последнюю активную async-задачу'],
+            ['/break job_1', 'Прервать конкретную задачу по jobId'],
+            ['/jobs', 'Показать список async-задач (active + recent finished)'],
             ['/clear', 'Очистить историю'],
             ['/exit', 'Выйти из TUI'],
         ];

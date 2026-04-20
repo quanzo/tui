@@ -64,7 +64,7 @@ class InteractiveCommand extends Command
     /** @var Terminal Объект для получения размеров терминала */
     private Terminal $terminal;
 
-    /** @var array История отправленных сообщений */
+    /** @var TuiHistoryDto История отправленных сообщений */
     private TuiHistoryDto $history;
 
     /**
@@ -343,32 +343,89 @@ class InteractiveCommand extends Command
 
     /**
      * Главный цикл обработки ввода и отрисовки.
+     *
+     * Важное отличие от “классического” `while (...) { stream_select(...) }`:
+     * здесь цикл построен вокруг **Revolt EventLoop**.
+     *
+     * Почему так:
+     * - Amp v3 (Futures, async, delay, http-client) выполняется поверх Revolt EventLoop.
+     * - Если event loop не крутится, `Future` не будет прогрессировать.
+     * - Поэтому TUI работает как набор watchers:
+     *   - `repeat(...)` — периодический tick для отрисовки и доставки результатов jobs;
+     *   - `onReadable(STDIN, ...)` — обработка ввода при появлении байтов.
+     *
+     * Общая схема:
+     * 1) `onReadable()` превращает байты stdin в `KeyEventDto` и применяет их через reducer.
+     * 2) reducer обновляет состояние (`TuiStateDto`) и может вернуть submit (Enter).
+     * 3) submit попадает в pre-hook (workspace-команды): sync-результат добавляется сразу,
+     *    async-команда стартует как job и завершится позже.
+     * 4) `repeat()` доставляет завершённые jobs (`drainCompleted()`) в историю и рендерит кадр.
+     *
+     * Управление временем жизни:
+     * - пока `$this->running === true`, watchers активны, а `suspension->suspend()` удерживает control-flow внутри loop.
+     * - когда `$this->running` становится false (например `/exit` или Ctrl+C), callbacks вызывают `resume()`,
+     *   `runLoop()` продолжает выполнение и корректно освобождает ресурсы.
+     *
+     * @param TerminalModeManager $terminalMode Управление режимами терминала (mouse/bracketed paste/stty).
+     * @return void
      */
     private function runLoop(TerminalModeManager $terminalMode): void
     {
         /** @var resource $stdin */
         $stdin = fopen('php://stdin', 'r');
+
+        // STDIN переводим в non-blocking режим.
+        // Это критично для event loop: callback `onReadable` должен быстро возвращаться
+        // и не должен зависать на чтении.
         stream_set_blocking($stdin, false);
 
+        // Компоненты TUI:
+        // - parser: bytes -> KeyEventDto
+        // - reducer: KeyEventDto -> state mutation (+ optional submittedInput)
+        // - renderer: state -> ANSI output
+        //
+        // Эти объекты создаются один раз и используются в callbacks, чтобы не создавать их на каждом tick.
         $parser = new KeySequenceParser(new Utf8CharReader());
         $reducer = new TuiReducer();
         $renderer = new TuiRenderer();
 
+        // Suspension — точка, на которой `runLoop()` “отдаёт управление” event loop.
+        // Пока suspension не resume'нут, текущий PHP stack не продолжится дальше `suspend()`.
+        //
+        // Это и есть “запуск” event loop в нашей парадигме: мы не вызываем `EventLoop::run()`,
+        // потому что Revolt управляет итерациями самостоятельно, пока есть активные watchers и мы находимся в suspend().
         $suspension = EventLoop::getSuspension();
 
+        // Render tick.
+        // Выбрана частота 50ms (~20 FPS) как компромисс:
+        // - достаточно плавно для курсора/скролла/интеракций;
+        // - достаточно редко, чтобы не грузить CPU постоянной полной перерисовкой.
+        //
+        // Если UI “грязный” (`fullRedraw=true`) — делаем полный кадр.
+        // Иначе — partial render, обновляя только изменившиеся строки ввода/статуса.
         $renderTickId = EventLoop::repeat(0.05, function () use ($terminalMode, $renderer, $suspension): void {
             if (!$this->running) {
+                // Прерывание цикла: возвращаем контроль `runLoop()`.
+                // Далее будет cleanup watchers и закрытие STDIN.
                 $suspension->resume(null);
                 return;
             }
 
             // Доставляем результаты завершённых async-задач в историю.
             if ($this->jobs !== null) {
+                // `drainCompleted()` возвращает entries, которые нужно добавить в историю.
+                // Это включает:
+                // - вывод async handler'а (например /exec stdout/stderr);
+                // - служебные сообщения о статусе и длительности (done/cancelled/failed).
+                //
+                // Здесь мы сознательно делаем append внутри render tick:
+                // UI остаётся thread-safe/управляемым: все изменения истории происходят в одном месте.
                 $completed = $this->jobs->drainCompleted();
                 if ($completed !== []) {
                     foreach ($completed as $entry) {
                         $this->history->append($entry);
                     }
+                    // История изменилась — нужен полный кадр (рамки/скролл/кол-во строк может измениться).
                     $this->fullRedraw = true;
                 }
             }
@@ -395,8 +452,17 @@ class InteractiveCommand extends Command
             $this->runPendingPostHookIfAny();
         });
 
+        // Watcher ввода.
+        // Callback вызывается event loop'ом, когда STDIN readable.
+        // Мы читаем из потока и преобразуем в KeyEventDto.
+        //
+        // Замечание про “256 событий”:
+        // - STDIN non-blocking, поэтому parser может вернуть null (данных не хватает) — прекращаем.
+        // - при удержании клавиши или при вставке (особенно bracketed paste) за один readable callback
+        //   может накопиться много байтов. Чтение батчами уменьшает input-latency.
         $readableId = EventLoop::onReadable($stdin, function (string $id, $stream) use ($parser, $reducer, $suspension): void {
             if (!$this->running) {
+                // Если цикл уже остановлен — снимаем watcher и выходим из suspend.
                 EventLoop::cancel($id);
                 $suspension->resume(null);
                 return;
@@ -409,8 +475,17 @@ class InteractiveCommand extends Command
                 if ($event === null) {
                     break;
                 }
+
+                // Применение KeyEventDto к state через reducer.
+                // Внутри `applyKeyEvent()` может произойти:
+                // - обновление input buffer/cursor;
+                // - прокрутка output;
+                // - submit по Enter -> запуск pre-hook (sync/async jobs);
+                // - остановка цикла (`running=false`) по Ctrl+C или /exit.
                 $this->applyKeyEvent($event, $reducer);
                 if (!$this->running) {
+                    // Немедленный выход: cancel watcher и resume suspend.
+                    // Это обеспечивает быстрый shutdown без ожидания следующего render tick.
                     EventLoop::cancel($id);
                     $suspension->resume(null);
                     return;
@@ -420,13 +495,21 @@ class InteractiveCommand extends Command
 
         // Первичный кадр рисуем максимально быстро.
         EventLoop::defer(function (): void {
+            // Помечаем UI “грязным” — следующий render tick выполнит full render.
             $this->fullRedraw = true;
         });
 
+        // Входим в event loop и остаёмся в нём, пока не будет вызван `resume()`.
+        // `resume()` происходит при `running=false` (см. callbacks выше).
         $suspension->suspend();
 
+        // Cleanup watchers.
+        // Очень важно отменить repeat/onReadable, иначе они будут удерживать loop и ресурсы.
+        // В `finally` выше (в execute()) гарантированно восстановятся режимы терминала.
         EventLoop::cancel($readableId);
         EventLoop::cancel($renderTickId);
+
+        // Закрываем STDIN (TUI завершён).
         fclose($stdin);
     }
 
@@ -609,9 +692,9 @@ class InteractiveCommand extends Command
         }
 
         $this->history->appendOutput($extra);
-        $this->terminal = new Terminal();
+        $this->terminal     = new Terminal();
         $this->outputScroll = $this->getMaxOutputScroll();
-        $this->fullRedraw = true;
+        $this->fullRedraw   = true;
     }
 
     /**
@@ -645,23 +728,23 @@ class InteractiveCommand extends Command
      */
     private function applyStateDto(TuiStateDto $state): void
     {
-        $this->history              = $state->getHistory();
-        $this->inputBuffer          = $state->getInputBuffer();
-        $this->cursorOffset         = $state->getCursorOffset();
-        $this->inputViewportTopLine = $state->getInputViewportTopLine();
-        $this->inputHistory = $state->getInputHistory();
-        $this->inputHistoryIndex = $state->getInputHistoryIndex();
-        $this->inputHistoryDraftBuffer = $state->getInputHistoryDraftBuffer();
+        $this->history                       = $state->getHistory();
+        $this->inputBuffer                   = $state->getInputBuffer();
+        $this->cursorOffset                  = $state->getCursorOffset();
+        $this->inputViewportTopLine          = $state->getInputViewportTopLine();
+        $this->inputHistory                  = $state->getInputHistory();
+        $this->inputHistoryIndex             = $state->getInputHistoryIndex();
+        $this->inputHistoryDraftBuffer       = $state->getInputHistoryDraftBuffer();
         $this->inputHistoryDraftCursorOffset = $state->getInputHistoryDraftCursorOffset();
-        $this->mouseModeEnabled     = $state->isMouseModeEnabled();
-        $this->outputScroll         = $state->getOutputScroll();
-        $this->focus                = $state->getFocus();
-        $this->running              = $state->isRunning();
-        $this->fullRedraw           = $state->isFullRedraw();
-        $this->prevInputLines       = $state->getPrevInputLines();
-        $this->prevStatusLine       = $state->getPrevStatusLine();
-        $this->prevWidth            = $state->getPrevWidth();
-        $this->prevHeight           = $state->getPrevHeight();
+        $this->mouseModeEnabled              = $state->isMouseModeEnabled();
+        $this->outputScroll                  = $state->getOutputScroll();
+        $this->focus                         = $state->getFocus();
+        $this->running                       = $state->isRunning();
+        $this->fullRedraw                    = $state->isFullRedraw();
+        $this->prevInputLines                = $state->getPrevInputLines();
+        $this->prevStatusLine                = $state->getPrevStatusLine();
+        $this->prevWidth                     = $state->getPrevWidth();
+        $this->prevHeight                    = $state->getPrevHeight();
     }
 
     /**
@@ -671,10 +754,10 @@ class InteractiveCommand extends Command
     {
         return new LayoutDto(
             outputContentStart: $this->getOutputContentStart(),
-            outputContentEnd: $this->getOutputContentEnd(),
-            inputContentStart: $this->getInputContentStart(),
-            inputContentEnd: $this->getInputContentEnd(),
-            statusLine: $this->getStatusLine(),
+            outputContentEnd  : $this->getOutputContentEnd(),
+            inputContentStart : $this->getInputContentStart(),
+            inputContentEnd   : $this->getInputContentEnd(),
+            statusLine        : $this->getStatusLine(),
         );
     }
 

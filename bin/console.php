@@ -2,17 +2,17 @@
 
 require __DIR__ . '/../vendor/autoload.php';
 
-use quanzo\tui\classes\command\InteractiveCommand;
-use quanzo\tui\classes\tui\async\TuiJobManager;
 use quanzo\tui\classes\tui\async\ShellProcessRunner;
-use quanzo\tui\classes\tui\command\handlers\BreakCommandHandler;
-use quanzo\tui\classes\tui\command\handlers\ClearCommandHandler;
-use quanzo\tui\classes\tui\command\handlers\ExecCommandHandler;
-use quanzo\tui\classes\tui\command\handlers\ExitCommandHandler;
-use quanzo\tui\classes\tui\command\handlers\HelpCommandHandler;
-use quanzo\tui\classes\tui\command\handlers\JobsCommandHandler;
-use quanzo\tui\classes\tui\command\handlers\LongCommandHandler;
-use quanzo\tui\classes\tui\command\handlers\WorkspaceCommandHandler;
+use quanzo\tui\classes\tui\async\TuiJobManager;
+use quanzo\tui\command\InteractiveCommand;
+use quanzo\tui\handlers\BreakCommandHandler;
+use quanzo\tui\handlers\ClearCommandHandler;
+use quanzo\tui\handlers\ExecCommandHandler;
+use quanzo\tui\handlers\ExitCommandHandler;
+use quanzo\tui\handlers\HelpCommandHandler;
+use quanzo\tui\handlers\JobsCommandHandler;
+use quanzo\tui\handlers\LongCommandHandler;
+use quanzo\tui\handlers\WorkspaceCommandHandler;
 use quanzo\tui\classes\tui\hooks\DefaultTuiPostOutputHook;
 use Symfony\Component\Console\Application;
 

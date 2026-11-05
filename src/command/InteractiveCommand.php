@@ -1,6 +1,6 @@
 <?php
 
-namespace quanzo\tui\classes\command;
+namespace quanzo\tui\command;
 
 use Revolt\EventLoop;
 use quanzo\tui\classes\status\ModeStatus;

@@ -12,8 +12,8 @@ use quanzo\tui\classes\dto\tui\command\TuiCommandContextDto;
 use quanzo\tui\classes\dto\tui\command\TuiCommandResultDto;
 use quanzo\tui\classes\dto\tui\history\TuiHistoryEntryDto;
 use quanzo\tui\classes\tui\async\TuiJobManager;
-use quanzo\tui\classes\tui\command\handlers\BreakCommandHandler;
-use quanzo\tui\classes\tui\command\handlers\JobsCommandHandler;
+use quanzo\tui\handlers\BreakCommandHandler;
+use quanzo\tui\handlers\JobsCommandHandler;
 use Revolt\EventLoop;
 
 use function Amp\async;

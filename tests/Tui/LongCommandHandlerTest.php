@@ -10,7 +10,7 @@ use PHPUnit\Framework\TestCase;
 use quanzo\tui\classes\dto\tui\command\ParsedUserInputDto;
 use quanzo\tui\classes\dto\tui\command\TuiCommandContextDto;
 use quanzo\tui\classes\dto\tui\history\TuiHistoryDto;
-use quanzo\tui\classes\tui\command\handlers\LongCommandHandler;
+use quanzo\tui\handlers\LongCommandHandler;
 use Revolt\EventLoop;
 
 /**

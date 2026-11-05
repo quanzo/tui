@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Tui;
 
-use quanzo\tui\classes\command\InteractiveCommand;
+use quanzo\tui\command\InteractiveCommand;
 use quanzo\tui\classes\dto\tui\command\ParsedUserInputDto;
 use quanzo\tui\classes\dto\tui\command\TuiCommandContextDto;
 use quanzo\tui\classes\dto\tui\command\TuiCommandResultDto;
@@ -124,7 +124,6 @@ final class InteractiveCommandHandlersDelegationTest extends TestCase
     {
         $ref = new \ReflectionClass($cmd);
         $method = $ref->getMethod('getDispatcher');
-        $method->setAccessible(true);
         /** @var TuiCommandDispatcher $dispatcher */
         $dispatcher = $method->invoke($cmd);
         return $dispatcher;

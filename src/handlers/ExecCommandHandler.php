@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace quanzo\tui\classes\tui\command\handlers;
+namespace quanzo\tui\handlers;
 
 use Amp\Cancellation;
 use Amp\Future;

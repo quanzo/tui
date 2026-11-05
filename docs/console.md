@@ -30,7 +30,7 @@
 
 ### Команда `interactive`
 
-Класс: `src/classes/command/InteractiveCommand.php`
+Класс: `src/command/InteractiveCommand.php` (`quanzo\tui\command\InteractiveCommand`)
 
 Назначение: запустить интерактивный TUI (область вывода + многострочный ввод + статус-бар).
 

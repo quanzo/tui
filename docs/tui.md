@@ -4,7 +4,7 @@
 
 ### Назначение
 
-Команда `interactive` (`src/classes/command/InteractiveCommand.php`) предоставляет текстовый UI:
+Команда `interactive` (`src/command/InteractiveCommand.php`, namespace `quanzo\tui\command`) предоставляет текстовый UI:
 
 - область вывода (история сообщений) с прокруткой;
 - многострочное поле ввода (viewport 3 строки) с редактированием;
@@ -74,16 +74,16 @@ TUI запускается как Symfony Console команда:
 ```php
 $jobs = new \quanzo\tui\classes\tui\async\TuiJobManager();
 
-$interactive = (new \quanzo\tui\classes\command\InteractiveCommand())
+$interactive = (new \quanzo\tui\command\InteractiveCommand())
     ->setCommandName('interactive')
     ->setDescriptionText('Интерактивный TUI (workspace)')
     ->setJobManager($jobs)
-    ->addHandler(new \quanzo\tui\classes\tui\command\handlers\HelpCommandHandler())
-    ->addHandler(new \quanzo\tui\classes\tui\command\handlers\WorkspaceCommandHandler())
-    ->addHandler(new \quanzo\tui\classes\tui\command\handlers\ClearCommandHandler())
-    ->addHandler(new \quanzo\tui\classes\tui\command\handlers\BreakCommandHandler($jobs))
-    ->addHandler(new \quanzo\tui\classes\tui\command\handlers\LongCommandHandler())
-    ->addHandler(new \quanzo\tui\classes\tui\command\handlers\ExitCommandHandler())
+    ->addHandler(new \quanzo\tui\handlers\HelpCommandHandler())
+    ->addHandler(new \quanzo\tui\handlers\WorkspaceCommandHandler())
+    ->addHandler(new \quanzo\tui\handlers\ClearCommandHandler())
+    ->addHandler(new \quanzo\tui\handlers\BreakCommandHandler($jobs))
+    ->addHandler(new \quanzo\tui\handlers\LongCommandHandler())
+    ->addHandler(new \quanzo\tui\handlers\ExitCommandHandler())
     ->setPostHook(new \quanzo\tui\classes\tui\hooks\DefaultTuiPostOutputHook());
 ```
 
@@ -114,7 +114,7 @@ $interactive = (new \quanzo\tui\classes\command\InteractiveCommand())
 - `src/interfaces/tui/command/AsyncTuiCommandHandlerInterface.php` — контракт async handler.\n
 - `src/classes/tui/async/TuiJobManager.php` — менеджер задач: start/break/drainCompleted.\n
 - `src/classes/tui/hooks/WorkspaceTuiPreOutputHook.php` — стартует async job и возвращает entry “Запущено …”.\n
-- `src/classes/command/InteractiveCommand.php` — периодически вызывает `drainCompleted()` и добавляет entries в историю.\n
+- `src/command/InteractiveCommand.php` — периодически вызывает `drainCompleted()` и добавляет entries в историю.\n
 
 Дополнительно:
 - **`/jobs`** печатает таблицу задач: активные (с `runningFor`) и последние завершённые (с `duration`).\n
@@ -175,4 +175,22 @@ InteractiveCommand -->|PostHook (after render)| HistoryEntries
 
 - При запуске без TTY (например, `printf \"/exit\\n\" | ./bin/console interactive`) `stty` может сообщить `Inappropriate ioctl for device`. Это нормально для non-interactive пайпов; для реального использования запускайте в настоящем терминале.
 - Если после выхода из TUI терминал «сломался» (не отображается ввод), причина обычно в некорректном восстановлении `stty` режима. В `TerminalModeManager` используется snapshot `stty -g` с нормализацией и fallback на `stty icanon echo`.
+
+### Где лежат команда и handlers
+
+- Консольная команда: `src/command/InteractiveCommand.php`, namespace `quanzo\tui\command`.
+- Handlers TUI (`/help`, `/ws`, `/exec`, …): `src/handlers/`, namespace `quanzo\tui\handlers`.
+- Парсер и диспетчер остаются в `src/classes/tui/command/`.
+
+### Unit-тесты
+
+Запуск: `./vendor/bin/phpunit`. Bash из тестов не вызывается. Покрыты чистые компоненты: парсер ввода, текстовые хелперы, буфер ввода, reducer, разбор клавиш и UTF-8, форматтер истории, pre-hook и sync-handlers.
+
+Сознательно оставленное текущее поведение (тесты его фиксируют, код не менялся):
+
+- `/exec` склеивает аргументы пробелом. `/exec ls "my file"` уходит в shell как `ls my file`. Токен `&&` при этом остаётся оператором.
+- `/ws ls` при несуществующем каталоге показывает пустую таблицу, без отдельной ошибки.
+- `TuiTextHelper::trimToWidthWithEllipsis()` с многоточием шире лимита возвращает строку шире лимита (`'...'` при ширине 1).
+- `/long` с мусором (`abc`, `0`, `-1`) выполняется 5 секунд; значение выше 600 обрезается до 600. В тестах секунды читаются через reflection, без ожидания.
+
 

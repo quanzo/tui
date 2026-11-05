@@ -11,6 +11,8 @@ use quanzo\tui\classes\dto\tui\command\ParsedUserInputDto;
 use quanzo\tui\classes\dto\tui\command\TuiCommandContextDto;
 use quanzo\tui\classes\dto\tui\command\TuiCommandResultDto;
 use quanzo\tui\classes\dto\tui\history\TuiHistoryEntryDto;
+use quanzo\tui\classes\dto\tui\view\blocks\PanelBlockDto;
+use quanzo\tui\classes\dto\tui\view\blocks\TableBlockDto;
 use quanzo\tui\classes\tui\async\TuiJobManager;
 use quanzo\tui\handlers\BreakCommandHandler;
 use quanzo\tui\handlers\JobsCommandHandler;
@@ -78,7 +80,7 @@ final class AsyncJobManagerTest extends TestCase
     /**
      * Проверяет, что `/jobs` показывает активные и завершённые задачи.
      *
-     * Важно: тест не проверяет точный формат времени, но проверяет наличие строк и jobId.
+     * Колонка startedAt — локальное время `Y-m-d H:i:s`, а не epoch в миллисекундах.
      */
     public function testJobsCommandShowsActiveAndRecentFinished(): void
     {
@@ -104,6 +106,15 @@ final class AsyncJobManagerTest extends TestCase
         $plain = (string) ($res->getAppendEntries()[0]?->getPlainText() ?? '');
         self::assertSame('jobs', $plain);
         self::assertNotSame('', $jobIdDone);
+
+        $panel = $res->getAppendEntries()[0]?->getBlocks()[0] ?? null;
+        self::assertInstanceOf(PanelBlockDto::class, $panel);
+        $table = $panel->getBody()[0] ?? null;
+        self::assertInstanceOf(TableBlockDto::class, $table);
+        self::assertNotEmpty($table->getRows());
+        foreach ($table->getRows() as $row) {
+            self::assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', (string) ($row[3] ?? ''));
+        }
     }
 
     /**

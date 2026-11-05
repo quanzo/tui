@@ -11,6 +11,7 @@ use quanzo\tui\classes\dto\tui\history\TuiHistoryEntryDto;
 use quanzo\tui\classes\dto\tui\view\blocks\PanelBlockDto;
 use quanzo\tui\classes\dto\tui\view\blocks\TableBlockDto;
 use quanzo\tui\classes\tui\async\TuiJobManager;
+use quanzo\tui\helpers\TuiTimeHelper;
 use quanzo\tui\interfaces\tui\command\TuiCommandHandlerInterface;
 
 /**
@@ -53,7 +54,7 @@ final class JobsCommandHandler implements TuiCommandHandlerInterface
                 $active->jobId,
                 $active->label,
                 'running',
-                $this->formatStartedAt($active->startedAtMs),
+                TuiTimeHelper::formatEpochMs($active->startedAtMs),
                 $this->formatDurationMs($active->runningForMs),
                 '',
             ];
@@ -64,7 +65,7 @@ final class JobsCommandHandler implements TuiCommandHandlerInterface
                 $finished->jobId,
                 $finished->label,
                 $finished->status,
-                $this->formatStartedAt($finished->startedAtMs),
+                TuiTimeHelper::formatEpochMs($finished->startedAtMs),
                 '',
                 $this->formatDurationMs($finished->getDurationMs()),
             ];
@@ -84,13 +85,14 @@ final class JobsCommandHandler implements TuiCommandHandlerInterface
         return (new TuiCommandResultDto())->setAppendEntries([$entry]);
     }
 
-    private function formatStartedAt(int $startedAtMs): string
-    {
-        // Это “best effort” для UX: просто показываем epoch ms, чтобы было удобно сравнивать.
-        // При желании можно заменить на человеческий формат (H:i:s), но тогда нужен “wall clock”.
-        return (string) $startedAtMs;
-    }
-
+    /**
+     * Форматирует длительность в миллисекундах для колонок `runningFor` и `duration`.
+     *
+     * Короче секунды значение остаётся в `ms`, иначе печатаются секунды с двумя знаками.
+     *
+     * @param int $ms Длительность в миллисекундах, включая 0
+     * @return string
+     */
     private function formatDurationMs(int $ms): string
     {
         if ($ms < 1000) {

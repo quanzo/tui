@@ -46,6 +46,7 @@
 
 - `/help`
 - `/ws ls`
+- `/ws help`
 - `/clear`
 - `/exit`
 

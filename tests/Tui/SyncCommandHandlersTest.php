@@ -109,6 +109,9 @@ final class SyncCommandHandlersTest extends TestCase
             $explicit = $handler->handle($this->context($dir), $this->input('/ws ls', 'ws', ['ls']));
             $this->assertSame($names, $this->tableNames($explicit->getAppendEntries()[0]->getBlocks()[0]));
 
+            $withJunk = $handler->handle($this->context($dir), $this->input('/ws ls nope', 'ws', ['ls', 'nope']));
+            $this->assertSame($names, $this->tableNames($withJunk->getAppendEntries()[0]->getBlocks()[0]));
+
             $unknown = $handler->handle($this->context($dir), $this->input('/ws nope', 'ws', ['nope']));
             $this->assertSame('Неизвестная подкоманда: nope', $unknown->getAppendEntries()[0]->getPlainText());
 
@@ -117,6 +120,20 @@ final class SyncCommandHandlersTest extends TestCase
                 $this->input('/ws ls', 'ws', ['ls']),
             );
             $this->assertSame([], $this->tableRows($missing->getAppendEntries()[0]->getBlocks()[0]));
+
+            $help = $handler->handle($this->context($dir), $this->input('/ws help', 'ws', ['help']));
+            $this->assertSame('workspace help', $help->getAppendEntries()[0]->getPlainText());
+            $helpPanel = $help->getAppendEntries()[0]->getBlocks()[0];
+            $this->assertInstanceOf(PanelBlockDto::class, $helpPanel);
+            $helpTable = $helpPanel->getBody()[0];
+            $this->assertInstanceOf(TableBlockDto::class, $helpTable);
+            $this->assertSame(
+                [
+                    ['/ws help', 'Справка по подкомандам workspace'],
+                    ['/ws ls', 'Показать содержимое текущей директории'],
+                ],
+                $helpTable->getRows(),
+            );
         } finally {
             @unlink($dir . '/a.txt');
             @rmdir($dir . '/sub');

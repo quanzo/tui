@@ -7,19 +7,19 @@ namespace quanzo\tui\handlers;
 use quanzo\tui\classes\dto\tui\command\ParsedUserInputDto;
 use quanzo\tui\classes\dto\tui\command\TuiCommandContextDto;
 use quanzo\tui\classes\dto\tui\command\TuiCommandResultDto;
+use quanzo\tui\classes\dto\tui\command\WorkspaceSubcommandCallDto;
+use quanzo\tui\classes\dto\tui\command\WorkspaceSubcommandParametersDto;
 use quanzo\tui\classes\dto\tui\history\TuiHistoryEntryDto;
-use quanzo\tui\classes\dto\tui\view\blocks\ListBlockDto;
 use quanzo\tui\classes\dto\tui\view\blocks\NoticeBlockDto;
-use quanzo\tui\classes\dto\tui\view\blocks\PanelBlockDto;
-use quanzo\tui\classes\dto\tui\view\blocks\TableBlockDto;
+use quanzo\tui\classes\tui\command\WorkspaceSubcommandRegistry;
 use quanzo\tui\enums\tui\TuiNoticeKindEnum;
 use quanzo\tui\interfaces\tui\command\TuiCommandHandlerInterface;
 
 /**
  * Handler команды `/ws` (workspace).
  *
- * Подкоманды:
- * - `ls` — показать содержимое текущей директории (ограниченный список).
+ * При создании читает классы из `src/handlers/workspace`, регистрирует их и вызывает
+ * подкоманду по первому токену. Без токена выполняется `ls`. Хвост строки — параметры подкоманды.
  *
  * Пример использования:
  *
@@ -30,6 +30,16 @@ use quanzo\tui\interfaces\tui\command\TuiCommandHandlerInterface;
  */
 final class WorkspaceCommandHandler implements TuiCommandHandlerInterface
 {
+    private WorkspaceSubcommandRegistry $subcommands;
+
+    /**
+     * @param WorkspaceSubcommandRegistry|null $subcommands Готовый реестр. Без аргумента читается каталог `workspace`.
+     */
+    public function __construct(?WorkspaceSubcommandRegistry $subcommands = null)
+    {
+        $this->subcommands = $subcommands ?? WorkspaceSubcommandRegistry::fromDirectory(__DIR__ . '/workspace');
+    }
+
     /**
      * Возвращает имя команды (без префикса `/`).
      *
@@ -41,10 +51,9 @@ final class WorkspaceCommandHandler implements TuiCommandHandlerInterface
     }
 
     /**
-     * Обрабатывает workspace-команду.
+     * Находит подкоманду и передаёт ей параметры хвоста строки.
      *
-     * На текущем этапе поддерживается только подкоманда `ls`.
-     * Неизвестные подкоманды возвращают warning entry.
+     * Неизвестное имя возвращает warning entry с текстом `Неизвестная подкоманда: {name}`.
      *
      * @param TuiCommandContextDto $ctx
      * @param ParsedUserInputDto $input
@@ -52,39 +61,53 @@ final class WorkspaceCommandHandler implements TuiCommandHandlerInterface
      */
     public function handle(TuiCommandContextDto $ctx, ParsedUserInputDto $input): TuiCommandResultDto
     {
+        $parsed = $this->parseInvocation($input);
+        $subcommand = $this->subcommands->find($parsed->getName());
+        if ($subcommand === null) {
+            return $this->unknownSubcommand($parsed->getName());
+        }
+
+        return $subcommand->execute($ctx, $parsed->getParameters(), $this->subcommands->toCatalog());
+    }
+
+    /**
+     * Отделяет имя подкоманды от параметров.
+     *
+     * Пустой список аргументов означает подкоманду `ls` без параметров.
+     * Иначе первый токен — имя, остальные уже разобранные параметры (кавычки снимает парсер ввода).
+     *
+     * @param ParsedUserInputDto $input Разобранный ввод команды `/ws`
+     * @return WorkspaceSubcommandCallDto
+     */
+    private function parseInvocation(ParsedUserInputDto $input): WorkspaceSubcommandCallDto
+    {
         $args = $input->getArgs();
-        $sub = (string) ($args[0] ?? 'ls');
-
-        if ($sub !== 'ls') {
-            $entry = TuiHistoryEntryDto::output('ws unknown')
-                ->setBlocks([new NoticeBlockDto(TuiNoticeKindEnum::Warning, 'Неизвестная подкоманда: ' . $sub)])
-                ->setPlainText('Неизвестная подкоманда: ' . $sub);
-            return (new TuiCommandResultDto())->setAppendEntries([$entry]);
+        if ($args === []) {
+            return new WorkspaceSubcommandCallDto('ls', new WorkspaceSubcommandParametersDto([]));
         }
 
-        $cwd = $ctx->getCwd();
-        $rows = [];
-        $items = @scandir($cwd) ?: [];
-        foreach ($items as $name) {
-            if ($name === '.' || $name === '..') {
-                continue;
-            }
-            $path = $cwd . DIRECTORY_SEPARATOR . $name;
-            $type = is_dir($path) ? 'dir' : 'file';
-            $rows[] = [$name, $type];
-            if (count($rows) >= 20) {
-                break;
-            }
+        $name = (string) $args[0];
+        $tokens = [];
+        $tail = array_slice($args, 1);
+        foreach ($tail as $token) {
+            $tokens[] = (string) $token;
         }
 
-        $panel = new PanelBlockDto('Workspace', [
-            new ListBlockDto(['Root: ' . $cwd]),
-            new TableBlockDto(['Name', 'Type'], $rows),
-        ]);
+        return new WorkspaceSubcommandCallDto($name, new WorkspaceSubcommandParametersDto($tokens));
+    }
 
-        $entry = TuiHistoryEntryDto::output('ws ls')
-            ->setBlocks([$panel])
-            ->setPlainText('workspace listed');
+    /**
+     * Собирает предупреждение о неизвестной подкоманде.
+     *
+     * @param string $name Имя, которого нет в реестре
+     * @return TuiCommandResultDto
+     */
+    private function unknownSubcommand(string $name): TuiCommandResultDto
+    {
+        $text = 'Неизвестная подкоманда: ' . $name;
+        $entry = TuiHistoryEntryDto::output('ws unknown')
+            ->setBlocks([new NoticeBlockDto(TuiNoticeKindEnum::Warning, $text)])
+            ->setPlainText($text);
 
         return (new TuiCommandResultDto())->setAppendEntries([$entry]);
     }

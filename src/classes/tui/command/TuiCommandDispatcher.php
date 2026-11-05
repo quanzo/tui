@@ -10,6 +10,7 @@ use quanzo\tui\classes\dto\tui\command\TuiCommandDispatchResultDto;
 use quanzo\tui\classes\dto\tui\command\TuiCommandResultDto;
 use quanzo\tui\interfaces\tui\command\AsyncTuiCommandHandlerInterface;
 use quanzo\tui\interfaces\tui\command\TuiCommandHandlerInterface;
+use quanzo\tui\interfaces\tui\command\TuiCommandRegistryInterface;
 use quanzo\tui\interfaces\tui\command\TuiNamedCommandHandlerInterface;
 
 /**
@@ -22,7 +23,7 @@ use quanzo\tui\interfaces\tui\command\TuiNamedCommandHandlerInterface;
  * $res = $dispatcher->dispatch($ctx, $input);
  * ```
  */
-final class TuiCommandDispatcher
+final class TuiCommandDispatcher implements TuiCommandRegistryInterface
 {
     /** @var array<string, TuiNamedCommandHandlerInterface> */
     private array $handlersByName = [];
@@ -78,6 +79,19 @@ final class TuiCommandDispatcher
     public function removeHandler(TuiNamedCommandHandlerInterface $handler): bool
     {
         return $this->removeHandlerByName($handler->getName());
+    }
+
+    /**
+     * Возвращает handlers в порядке первой регистрации.
+     *
+     * Повторная регистрация того же имени заменяет экземпляр и не сдвигает позицию.
+     * В списке те же объекты, что хранит диспетчер.
+     *
+     * @return list<TuiNamedCommandHandlerInterface>
+     */
+    public function listHandlers(): array
+    {
+        return array_values($this->handlersByName);
     }
 
     /**

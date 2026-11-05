@@ -54,7 +54,10 @@ final class WorkspaceSubcommandRegistryTest extends TestCase
         $this->assertSame('Справка по подкомандам workspace', $items[0]->getDescription());
         $this->assertSame('ls', $items[1]->getName());
         $this->assertSame('/ws ls', $items[1]->getUsage());
-        $this->assertSame('Показать содержимое текущей директории', $items[1]->getDescription());
+        $this->assertSame(
+            'Содержимое каталога, не больше 20 записей. Лишние аргументы игнорируются. Нет каталога — пустая таблица',
+            $items[1]->getDescription(),
+        );
         $this->assertInstanceOf(\quanzo\tui\handlers\workspace\LsSubcommand::class, $registry->find('ls'));
         $this->assertInstanceOf(\quanzo\tui\handlers\workspace\HelpSubcommand::class, $registry->find('help'));
         $this->assertNull($registry->find('missing'));

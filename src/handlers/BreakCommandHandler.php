@@ -7,6 +7,8 @@ namespace quanzo\tui\handlers;
 use quanzo\tui\classes\dto\tui\command\ParsedUserInputDto;
 use quanzo\tui\classes\dto\tui\command\TuiCommandContextDto;
 use quanzo\tui\classes\dto\tui\command\TuiCommandResultDto;
+use quanzo\tui\classes\dto\tui\help\TuiCommandHelpDto;
+use quanzo\tui\classes\dto\tui\help\TuiHelpRowDto;
 use quanzo\tui\classes\dto\tui\history\TuiHistoryEntryDto;
 use quanzo\tui\classes\dto\tui\view\blocks\NoticeBlockDto;
 use quanzo\tui\classes\tui\async\TuiJobManager;
@@ -44,6 +46,19 @@ final class BreakCommandHandler implements TuiCommandHandlerInterface
     public function getName(): string
     {
         return 'break';
+    }
+
+    /**
+     * Возвращает справку команды `/break`.
+     *
+     * @return TuiCommandHelpDto
+     */
+    public function getHelp(): TuiCommandHelpDto
+    {
+        return new TuiCommandHelpDto([
+            new TuiHelpRowDto('/break', 'Отменить последнюю активную задачу. Нет задач — сообщение «Нет активных задач.»'),
+            new TuiHelpRowDto('/break job_1', 'Отменить задачу с указанным id. Нет такого id — сообщение «Задача не найдена.»'),
+        ]);
     }
 
     /**

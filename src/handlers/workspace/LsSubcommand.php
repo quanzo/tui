@@ -42,7 +42,7 @@ final class LsSubcommand extends AbstractWorkspaceSubcommand
      */
     public function getDescription(): string
     {
-        return 'Показать содержимое текущей директории';
+        return 'Содержимое каталога, не больше 20 записей. Лишние аргументы игнорируются. Нет каталога — пустая таблица';
     }
 
     /**

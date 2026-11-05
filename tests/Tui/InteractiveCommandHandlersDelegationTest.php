@@ -160,6 +160,11 @@ final class InteractiveCommandHandlersDelegationTest extends TestCase
                 return $this->name;
             }
 
+            public function getHelp(): \quanzo\tui\classes\dto\tui\help\TuiCommandHelpDto
+            {
+                return new \quanzo\tui\classes\dto\tui\help\TuiCommandHelpDto([]);
+            }
+
             public function handle(TuiCommandContextDto $ctx, ParsedUserInputDto $input): TuiCommandResultDto
             {
                 return $this->result;

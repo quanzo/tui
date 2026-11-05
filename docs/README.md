@@ -20,4 +20,5 @@
 
 - `docs/console.md` — консольные команды и точка входа.
 - `docs/tui.md` — архитектура и поведение TUI (ввод → reducer → render), обработчики команд `/help` и т.д.
+- Пользовательская справка: `/help` внутри TUI и `./bin/console help interactive`. Экран, режимы и клавиши — `src/classes/tui/help/TuiUserGuide.php`. Текст команд — `getHelp()` каждого handler.
 

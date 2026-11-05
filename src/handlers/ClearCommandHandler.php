@@ -7,6 +7,8 @@ namespace quanzo\tui\handlers;
 use quanzo\tui\classes\dto\tui\command\ParsedUserInputDto;
 use quanzo\tui\classes\dto\tui\command\TuiCommandContextDto;
 use quanzo\tui\classes\dto\tui\command\TuiCommandResultDto;
+use quanzo\tui\classes\dto\tui\help\TuiCommandHelpDto;
+use quanzo\tui\classes\dto\tui\help\TuiHelpRowDto;
 use quanzo\tui\classes\dto\tui\history\TuiHistoryEntryDto;
 use quanzo\tui\classes\dto\tui\view\blocks\NoticeBlockDto;
 use quanzo\tui\enums\tui\TuiNoticeKindEnum;
@@ -27,6 +29,18 @@ final class ClearCommandHandler implements TuiCommandHandlerInterface
     public function getName(): string
     {
         return 'clear';
+    }
+
+    /**
+     * Возвращает справку команды `/clear`.
+     *
+     * @return TuiCommandHelpDto
+     */
+    public function getHelp(): TuiCommandHelpDto
+    {
+        return new TuiCommandHelpDto([
+            new TuiHelpRowDto('/clear', 'Очистить историю'),
+        ]);
     }
 
     /**

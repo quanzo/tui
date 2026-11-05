@@ -12,6 +12,8 @@ use quanzo\tui\classes\tui\state\TuiReducer;
 use quanzo\tui\classes\tui\render\TuiHistoryFormatter;
 use quanzo\tui\classes\tui\render\TuiRenderer;
 use quanzo\tui\classes\tui\command\TuiCommandDispatcher;
+use quanzo\tui\classes\tui\help\TuiCommandHelpCollector;
+use quanzo\tui\classes\tui\help\TuiUserGuide;
 use quanzo\tui\classes\tui\hooks\WorkspaceTuiPreOutputHook;
 use quanzo\tui\classes\dto\tui\history\TuiHistoryDto;
 use quanzo\tui\classes\dto\tui\KeyEventDto;
@@ -24,6 +26,7 @@ use quanzo\tui\classes\dto\tui\view\TuiThemeDto;
 use quanzo\tui\interfaces\tui\TuiPostOutputHookInterface;
 use quanzo\tui\interfaces\tui\TuiPreOutputHookInterface;
 use quanzo\tui\interfaces\tui\command\TuiCommandHandlerInterface;
+use quanzo\tui\interfaces\tui\command\TuiCommandRegistryAwareInterface;
 use quanzo\tui\interfaces\tui\command\TuiNamedCommandHandlerInterface;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -183,6 +186,21 @@ class InteractiveCommand extends Command
     }
 
     /**
+     * Собирает плоскую справку из текущего реестра команд.
+     *
+     * Экран, режимы и клавиши берёт {@see TuiUserGuide}, строки команд — `getHelp()` handlers.
+     * Текст совпадает с панелью `/help` и не зависит от `NEURON_TUI_HELP_ASCII`.
+     *
+     * @return string
+     */
+    public function getHelp(): string
+    {
+        return TuiUserGuide::toPlainText(TuiUserGuide::build(
+            TuiCommandHelpCollector::fromRegistry($this->getDispatcher()),
+        ));
+    }
+
+    /**
      * Устанавливает имя команды (fluent API).
      *
      * Используется для создания нескольких TUI-команд на базе одного класса (разные наборы handlers/hooks).
@@ -273,6 +291,9 @@ class InteractiveCommand extends Command
     public function addHandler(TuiNamedCommandHandlerInterface $handler): self
     {
         $this->getDispatcher()->addHandler($handler);
+        if ($handler instanceof TuiCommandRegistryAwareInterface) {
+            $handler->setCommandRegistry($this->getDispatcher());
+        }
         return $this;
     }
 

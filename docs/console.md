@@ -42,11 +42,17 @@
 
 #### Команды внутри TUI
 
-Список поддерживаемых команд определяется зарегистрированными handlers (см. `docs/tui.md`):
+Как устроен экран, режимы и клавиши — в `./bin/console help interactive` и, уже внутри TUI, в `/help`. Экран, режимы и клавиши: `src/classes/tui/help/TuiUserGuide.php`. Строки команд: `getHelp()` handlers (см. также `docs/tui.md`).
+
+Список команд:
 
 - `/help`
-- `/ws ls`
+- `/ws` и `/ws ls`
 - `/ws help`
+- `/long` и `/long 10`
+- `/exec ls -la`
+- `/jobs`
+- `/break` и `/break job_1`
 - `/clear`
 - `/exit`
 

@@ -79,6 +79,11 @@ final class WorkspaceTuiPreOutputHookTest extends TestCase
                 return 'ping';
             }
 
+            public function getHelp(): \quanzo\tui\classes\dto\tui\help\TuiCommandHelpDto
+            {
+                return new \quanzo\tui\classes\dto\tui\help\TuiCommandHelpDto([]);
+            }
+
             public function handleAsync(
                 TuiCommandContextDto $ctx,
                 ParsedUserInputDto $input,
@@ -110,6 +115,11 @@ final class WorkspaceTuiPreOutputHookTest extends TestCase
             public function getName(): string
             {
                 return 'noop';
+            }
+
+            public function getHelp(): \quanzo\tui\classes\dto\tui\help\TuiCommandHelpDto
+            {
+                return new \quanzo\tui\classes\dto\tui\help\TuiCommandHelpDto([]);
             }
 
             public function handle(TuiCommandContextDto $ctx, ParsedUserInputDto $input): TuiCommandResultDto

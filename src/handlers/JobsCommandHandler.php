@@ -7,6 +7,8 @@ namespace quanzo\tui\handlers;
 use quanzo\tui\classes\dto\tui\command\ParsedUserInputDto;
 use quanzo\tui\classes\dto\tui\command\TuiCommandContextDto;
 use quanzo\tui\classes\dto\tui\command\TuiCommandResultDto;
+use quanzo\tui\classes\dto\tui\help\TuiCommandHelpDto;
+use quanzo\tui\classes\dto\tui\help\TuiHelpRowDto;
 use quanzo\tui\classes\dto\tui\history\TuiHistoryEntryDto;
 use quanzo\tui\classes\dto\tui\view\blocks\PanelBlockDto;
 use quanzo\tui\classes\dto\tui\view\blocks\TableBlockDto;
@@ -36,6 +38,18 @@ final class JobsCommandHandler implements TuiCommandHandlerInterface
     public function getName(): string
     {
         return 'jobs';
+    }
+
+    /**
+     * Возвращает справку команды `/jobs`.
+     *
+     * @return TuiCommandHelpDto
+     */
+    public function getHelp(): TuiCommandHelpDto
+    {
+        return new TuiCommandHelpDto([
+            new TuiHelpRowDto('/jobs', 'Активные и недавние задачи. Колонка startedAt — локальное время'),
+        ]);
     }
 
     /**

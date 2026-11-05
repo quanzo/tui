@@ -9,6 +9,8 @@ use quanzo\tui\classes\dto\tui\command\TuiCommandContextDto;
 use quanzo\tui\classes\dto\tui\command\TuiCommandResultDto;
 use quanzo\tui\classes\dto\tui\command\WorkspaceSubcommandCallDto;
 use quanzo\tui\classes\dto\tui\command\WorkspaceSubcommandParametersDto;
+use quanzo\tui\classes\dto\tui\help\TuiCommandHelpDto;
+use quanzo\tui\classes\dto\tui\help\TuiHelpRowDto;
 use quanzo\tui\classes\dto\tui\history\TuiHistoryEntryDto;
 use quanzo\tui\classes\dto\tui\view\blocks\NoticeBlockDto;
 use quanzo\tui\classes\tui\command\WorkspaceSubcommandRegistry;
@@ -48,6 +50,23 @@ final class WorkspaceCommandHandler implements TuiCommandHandlerInterface
     public function getName(): string
     {
         return 'ws';
+    }
+
+    /**
+     * Возвращает справку `/ws` и строк подкоманд из их описаний.
+     *
+     * @return TuiCommandHelpDto
+     */
+    public function getHelp(): TuiCommandHelpDto
+    {
+        $entries = [
+            new TuiHelpRowDto('/ws', 'То же, что /ws ls: каталог текущего процесса'),
+        ];
+        foreach ($this->subcommands->toCatalog()->getItems() as $item) {
+            $entries[] = new TuiHelpRowDto($item->getUsage(), $item->getDescription());
+        }
+
+        return new TuiCommandHelpDto($entries);
     }
 
     /**

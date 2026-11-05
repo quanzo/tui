@@ -9,17 +9,32 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use quanzo\tui\classes\dto\tui\command\ParsedUserInputDto;
 use quanzo\tui\classes\dto\tui\command\TuiCommandContextDto;
+use quanzo\tui\classes\dto\tui\command\TuiCommandResultDto;
+use quanzo\tui\classes\dto\tui\help\TuiCommandHelpCatalogDto;
+use quanzo\tui\classes\dto\tui\help\TuiCommandHelpDto;
+use quanzo\tui\classes\dto\tui\help\TuiHelpGuideDto;
+use quanzo\tui\classes\dto\tui\help\TuiHelpRowDto;
 use quanzo\tui\classes\dto\tui\history\TuiHistoryDto;
+use quanzo\tui\classes\dto\tui\view\blocks\HeadingBlockDto;
+use quanzo\tui\classes\dto\tui\view\blocks\ListBlockDto;
 use quanzo\tui\classes\dto\tui\view\blocks\PanelBlockDto;
 use quanzo\tui\classes\dto\tui\view\blocks\TableBlockDto;
+use quanzo\tui\classes\dto\tui\view\blocks\TextBlockDto;
+use quanzo\tui\classes\tui\async\ShellProcessRunner;
 use quanzo\tui\classes\tui\async\TuiJobManager;
+use quanzo\tui\classes\tui\command\TuiCommandDispatcher;
+use quanzo\tui\classes\tui\help\TuiCommandHelpCollector;
+use quanzo\tui\classes\tui\help\TuiUserGuide;
+use quanzo\tui\command\InteractiveCommand;
 use quanzo\tui\handlers\BreakCommandHandler;
 use quanzo\tui\handlers\ClearCommandHandler;
+use quanzo\tui\handlers\ExecCommandHandler;
 use quanzo\tui\handlers\ExitCommandHandler;
 use quanzo\tui\handlers\HelpCommandHandler;
 use quanzo\tui\handlers\JobsCommandHandler;
 use quanzo\tui\handlers\LongCommandHandler;
 use quanzo\tui\handlers\WorkspaceCommandHandler;
+use quanzo\tui\interfaces\tui\command\TuiCommandHandlerInterface;
 
 /**
  * Тесты sync-handlers: help, clear, exit, ws, break, jobs и разбор секунд `/long`.
@@ -70,6 +85,172 @@ final class SyncCommandHandlersTest extends TestCase
             [' ', 'Neuron TUI'],
             ['no', 'Neuron TUI'],
         ];
+    }
+
+    /**
+     * Панель `/help` содержит секции руководства. ASCII-режим меняет только маркер списка.
+     */
+    public function testHelpGuideSections(): void
+    {
+        $unicode = $this->helpPanel('0');
+        $ascii = $this->helpPanel('1');
+
+        $titles = ['Экран', 'Режимы', 'Клавиши', 'Команды', 'Фоновые задачи'];
+        $this->assertSame($titles, $this->headingTexts($unicode));
+        $this->assertSame($titles, $this->headingTexts($ascii));
+        $this->assertSame('•', $this->singleList($unicode)->getBullet());
+        $this->assertSame('-', $this->singleList($ascii)->getBullet());
+        $this->assertStringContainsString('ПРОСМОТР', $this->joinedText($unicode));
+        $this->assertStringContainsString('ПРОСМОТР', $this->joinedText($ascii));
+    }
+
+    /**
+     * Клавиши ищутся в секции руководства, команды — в строках `getHelp()`.
+     * Выдуманные сочетания и команды отсутствуют.
+     *
+     * @param string $kind `key` или `command`
+     * @param string $label Фрагмент первой колонки
+     * @param bool $present true, если фрагмент должен найтись
+     */
+    #[DataProvider('helpEntryCases')]
+    public function testHelpEntryPresence(string $kind, string $label, bool $present): void
+    {
+        $labels = $kind === 'key'
+            ? $this->sectionLabels(TuiUserGuide::build(new TuiCommandHelpCatalogDto([])), 'Клавиши')
+            : $this->rowLabels(TuiCommandHelpCollector::fromRegistry($this->productionDispatcher())->getRows());
+
+        $found = false;
+        foreach ($labels as $rowLabel) {
+            if (str_contains($rowLabel, $label)) {
+                $found = true;
+                break;
+            }
+        }
+
+        $this->assertSame($present, $found, $label);
+    }
+
+    /**
+     * Набор известных и заведомо ложных подписей справки.
+     *
+     * @return list<array{0:string,1:string,2:bool}>
+     */
+    public static function helpEntryCases(): array
+    {
+        return [
+            ['key', 'Tab', true],
+            ['key', 'Ctrl+J', true],
+            ['key', 'F2', true],
+            ['key', 'PgUp', true],
+            ['key', 'Enter', true],
+            ['key', 'Ctrl+C', true],
+            ['key', 'Home', true],
+            ['key', 'Ctrl+Z', false],
+            ['key', 'Shift+Tab', false],
+            ['command', '/help', true],
+            ['command', '/ws ls', true],
+            ['command', '/long', true],
+            ['command', '/exec', true],
+            ['command', '/break', true],
+            ['command', '/jobs', true],
+            ['command', '/rm', false],
+            ['command', 'Ctrl+Z', false],
+            ['command', 'Shift+Tab', false],
+        ];
+    }
+
+    /**
+     * Без реестра раздел «Команды» пуст, остальные секции остаются.
+     */
+    public function testHelpWithoutRegistryHasEmptyCommandTable(): void
+    {
+        $panel = $this->helpPanel('0');
+
+        $this->assertSame(
+            ['Экран', 'Режимы', 'Клавиши', 'Команды', 'Фоновые задачи'],
+            $this->headingTexts($panel),
+        );
+        $this->assertSame([], $this->commandTableRows($panel));
+    }
+
+    /**
+     * Пустой `getHelp()` не добавляет строку в каталог.
+     */
+    public function testEmptyCommandHelpIsSkipped(): void
+    {
+        $dispatcher = new TuiCommandDispatcher([]);
+        $dispatcher->addHandler(new ClearCommandHandler());
+        $dispatcher->addHandler($this->namedHelp('silent', []));
+
+        $labels = $this->rowLabels(TuiCommandHelpCollector::fromRegistry($dispatcher)->getRows());
+
+        $this->assertSame(['/clear'], $labels);
+    }
+
+    /**
+     * Порядок строк справки совпадает с порядком `addHandler`.
+     */
+    public function testCommandHelpFollowsRegistrationOrder(): void
+    {
+        $dispatcher = new TuiCommandDispatcher([]);
+        $dispatcher->addHandler(new HelpCommandHandler());
+        $dispatcher->addHandler(new ClearCommandHandler());
+        $dispatcher->addHandler(new ExitCommandHandler());
+
+        $labels = $this->rowLabels(TuiCommandHelpCollector::fromRegistry($dispatcher)->getRows());
+
+        $this->assertSame(['/help', '/clear', '/exit'], $labels);
+    }
+
+    /**
+     * Повторная регистрация того же имени заменяет текст и сохраняет позицию.
+     */
+    public function testRepeatedRegistrationReplacesHelpText(): void
+    {
+        $dispatcher = new TuiCommandDispatcher([]);
+        $dispatcher->addHandler(new HelpCommandHandler());
+        $dispatcher->addHandler($this->namedHelp('demo', [new TuiHelpRowDto('/demo', 'старое')]));
+        $dispatcher->addHandler(new ExitCommandHandler());
+        $dispatcher->addHandler($this->namedHelp('demo', [new TuiHelpRowDto('/demo', 'новое')]));
+
+        $rows = TuiCommandHelpCollector::fromRegistry($dispatcher)->getRows();
+
+        $this->assertSame(['/help', '/demo', '/exit'], $this->rowLabels($rows));
+        $this->assertSame('новое', $rows[1]->getDescription());
+    }
+
+    /**
+     * Плоский текст Symfony совпадает со сборкой того же реестра и не зависит от ASCII-флага.
+     */
+    public function testPlainHelpIgnoresAsciiFlag(): void
+    {
+        $previous = getenv('NEURON_TUI_HELP_ASCII');
+        $command = $this->interactiveWithHandlers();
+        $dispatcher = $this->dispatcherOf($command);
+        $expected = TuiUserGuide::toPlainText(TuiUserGuide::build(
+            TuiCommandHelpCollector::fromRegistry($dispatcher),
+        ));
+
+        putenv('NEURON_TUI_HELP_ASCII');
+
+        try {
+            $without = $command->getHelp();
+            putenv('NEURON_TUI_HELP_ASCII=1');
+            $with = $command->getHelp();
+
+            $this->assertNotSame('', trim($with));
+            $this->assertSame($without, $with);
+            $this->assertSame($expected, $with);
+            foreach (['Экран', 'Режимы', 'Клавиши', 'Команды', 'Фоновые задачи'] as $title) {
+                $this->assertStringContainsString("\n" . $title . "\n", $with);
+            }
+        } finally {
+            if ($previous === false) {
+                putenv('NEURON_TUI_HELP_ASCII');
+            } else {
+                putenv('NEURON_TUI_HELP_ASCII=' . $previous);
+            }
+        }
     }
 
     /**
@@ -130,7 +311,7 @@ final class SyncCommandHandlersTest extends TestCase
             $this->assertSame(
                 [
                     ['/ws help', 'Справка по подкомандам workspace'],
-                    ['/ws ls', 'Показать содержимое текущей директории'],
+                    ['/ws ls', 'Содержимое каталога, не больше 20 записей. Лишние аргументы игнорируются. Нет каталога — пустая таблица'],
                 ],
                 $helpTable->getRows(),
             );
@@ -257,5 +438,262 @@ final class SyncCommandHandlersTest extends TestCase
         $table = $block->getBody()[1] ?? $block->getBody()[0];
         $this->assertInstanceOf(TableBlockDto::class, $table);
         return $table->getRows();
+    }
+
+    /**
+     * Строит панель `/help` при заданном значении `NEURON_TUI_HELP_ASCII` и восстанавливает окружение.
+     *
+     * @param string $env Значение переменной окружения
+     * @return PanelBlockDto
+     */
+    private function helpPanel(string $env): PanelBlockDto
+    {
+        $previous = getenv('NEURON_TUI_HELP_ASCII');
+        putenv('NEURON_TUI_HELP_ASCII=' . $env);
+
+        try {
+            $result = (new HelpCommandHandler())->handle($this->context('.'), $this->input('/help', 'help', []));
+            $panel = $result->getAppendEntries()[0]->getBlocks()[0];
+            $this->assertInstanceOf(PanelBlockDto::class, $panel);
+
+            return $panel;
+        } finally {
+            if ($previous === false) {
+                putenv('NEURON_TUI_HELP_ASCII');
+            } else {
+                putenv('NEURON_TUI_HELP_ASCII=' . $previous);
+            }
+        }
+    }
+
+    /**
+     * Собирает заголовки секций внутри панели.
+     *
+     * @param PanelBlockDto $panel Панель `/help`
+     * @return list<string>
+     */
+    private function headingTexts(PanelBlockDto $panel): array
+    {
+        $titles = [];
+        foreach ($panel->getBody() as $block) {
+            if ($block instanceof HeadingBlockDto) {
+                $titles[] = $block->getText();
+            }
+        }
+
+        return $titles;
+    }
+
+    /**
+     * Возвращает единственный список панели.
+     *
+     * @param PanelBlockDto $panel Панель `/help`
+     * @return ListBlockDto
+     */
+    private function singleList(PanelBlockDto $panel): ListBlockDto
+    {
+        $lists = [];
+        foreach ($panel->getBody() as $block) {
+            if ($block instanceof ListBlockDto) {
+                $lists[] = $block;
+            }
+        }
+
+        $this->assertCount(1, $lists);
+
+        return $lists[0];
+    }
+
+    /**
+     * Склеивает вступление и абзацы панели, чтобы проверить русский текст.
+     *
+     * @param PanelBlockDto $panel Панель `/help`
+     * @return string
+     */
+    private function joinedText(PanelBlockDto $panel): string
+    {
+        $parts = [];
+        foreach ($panel->getBody() as $block) {
+            if ($block instanceof TextBlockDto) {
+                $parts[] = $block->getText();
+            }
+        }
+
+        return implode("\n", $parts);
+    }
+
+    /**
+     * Собирает подписи строк одной секции руководства.
+     *
+     * @param TuiHelpGuideDto $guide Собранное руководство
+     * @param string $title Заголовок секции
+     * @return list<string>
+     */
+    private function sectionLabels(TuiHelpGuideDto $guide, string $title): array
+    {
+        foreach ($guide->getSections() as $section) {
+            if ($section->getTitle() !== $title) {
+                continue;
+            }
+            $table = $section->getTable();
+            $this->assertNotNull($table);
+
+            return $this->rowLabels($table->getRows());
+        }
+
+        $this->fail('Секция не найдена: ' . $title);
+    }
+
+    /**
+     * Собирает подписи строк справки.
+     *
+     * @param list<TuiHelpRowDto> $rows Строки каталога или таблицы
+     * @return list<string>
+     */
+    private function rowLabels(array $rows): array
+    {
+        $labels = [];
+        foreach ($rows as $row) {
+            $labels[] = $row->getLabel();
+        }
+
+        return $labels;
+    }
+
+    /**
+     * Возвращает строки таблицы «Команды» внутри панели `/help`.
+     *
+     * @param PanelBlockDto $panel Панель `/help`
+     * @return list<list<string>>
+     */
+    private function commandTableRows(PanelBlockDto $panel): array
+    {
+        $seen = false;
+        foreach ($panel->getBody() as $block) {
+            if ($block instanceof HeadingBlockDto && $block->getText() === 'Команды') {
+                $seen = true;
+                continue;
+            }
+            if ($seen && $block instanceof TableBlockDto) {
+                return $block->getRows();
+            }
+        }
+
+        $this->fail('Таблица команд не найдена');
+    }
+
+    /**
+     * Реестр боевых handlers в том порядке, в каком их подключает `bin/console.php`.
+     *
+     * @return TuiCommandDispatcher
+     */
+    private function productionDispatcher(): TuiCommandDispatcher
+    {
+        $jobs = new TuiJobManager();
+        $dispatcher = new TuiCommandDispatcher([]);
+        $handlers = [
+            new HelpCommandHandler($dispatcher),
+            new WorkspaceCommandHandler(),
+            new ClearCommandHandler(),
+            new BreakCommandHandler($jobs),
+            new JobsCommandHandler($jobs),
+            new LongCommandHandler(),
+            new ExecCommandHandler(new ShellProcessRunner()),
+            new ExitCommandHandler(),
+        ];
+        foreach ($handlers as $handler) {
+            $dispatcher->addHandler($handler);
+        }
+
+        return $dispatcher;
+    }
+
+    /**
+     * Команда `interactive` с тем же набором handlers, что и точка входа.
+     *
+     * @return InteractiveCommand
+     */
+    private function interactiveWithHandlers(): InteractiveCommand
+    {
+        $jobs = new TuiJobManager();
+
+        return (new InteractiveCommand())
+            ->addHandler(new HelpCommandHandler())
+            ->addHandler(new WorkspaceCommandHandler())
+            ->addHandler(new ClearCommandHandler())
+            ->addHandler(new BreakCommandHandler($jobs))
+            ->addHandler(new JobsCommandHandler($jobs))
+            ->addHandler(new LongCommandHandler())
+            ->addHandler(new ExecCommandHandler(new ShellProcessRunner()))
+            ->addHandler(new ExitCommandHandler());
+    }
+
+    /**
+     * Достаёт диспетчер команды через reflection: публичного getter нет.
+     *
+     * @param InteractiveCommand $command Команда с уже добавленными handlers
+     * @return TuiCommandDispatcher
+     */
+    private function dispatcherOf(InteractiveCommand $command): TuiCommandDispatcher
+    {
+        $method = new \ReflectionMethod($command, 'getDispatcher');
+        $dispatcher = $method->invoke($command);
+        $this->assertInstanceOf(TuiCommandDispatcher::class, $dispatcher);
+
+        return $dispatcher;
+    }
+
+    /**
+     * Stub-команда с заданными строками справки. Пустой список в таблицу не попадает.
+     *
+     * @param string $name Имя команды без `/`
+     * @param list<TuiHelpRowDto> $entries Строки `getHelp()`
+     * @return TuiCommandHandlerInterface
+     */
+    private function namedHelp(string $name, array $entries): TuiCommandHandlerInterface
+    {
+        return new class ($name, $entries) implements TuiCommandHandlerInterface {
+            /**
+             * @param string $name
+             * @param list<TuiHelpRowDto> $entries
+             */
+            public function __construct(
+                private readonly string $name,
+                private readonly array $entries,
+            ) {
+            }
+
+            /**
+             * Возвращает имя stub-команды.
+             *
+             * @return string
+             */
+            public function getName(): string
+            {
+                return $this->name;
+            }
+
+            /**
+             * Возвращает переданные строки справки.
+             *
+             * @return TuiCommandHelpDto
+             */
+            public function getHelp(): TuiCommandHelpDto
+            {
+                return new TuiCommandHelpDto($this->entries);
+            }
+
+            /**
+             * Stub не выполняет команду.
+             *
+             * @param TuiCommandContextDto $ctx
+             * @param ParsedUserInputDto $input
+             * @return TuiCommandResultDto
+             */
+            public function handle(TuiCommandContextDto $ctx, ParsedUserInputDto $input): TuiCommandResultDto
+            {
+                return new TuiCommandResultDto();
+            }
+        };
     }
 }
